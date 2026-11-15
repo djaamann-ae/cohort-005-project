@@ -421,3 +421,66 @@ not had *shown* to them and is cleared by opening the popover; `"unread"` is the
 "Model Notification in Cadence's language" ([#4](https://github.com/djaamann-ae/cohort-005-project/issues/4)),
 which settled that Cadence surfaces read/unread only. If the glossary says unread, pass
 `badgeCountType="unread"` — see §6, which is where the two diverge.
+
+## 4. Idempotency — does a double trigger produce two Notifications?
+
+**Yes, by default.** Nothing in the trigger payload deduplicates. Two identical
+`POST /v1/workflows/{key}/trigger` calls for the same recipient with the same `data` are two
+workflow runs — the endpoint returns a distinct `workflow_run_id` per call, and the docs note "All
+workflow runs are executed asynchronously." Cadence has to opt in to deduplication.
+Source: <https://docs.knock.app/api-reference/workflows/trigger>
+
+### The mechanism Knock actually provides: the `Idempotency-Key` header
+
+- "To perform an idempotent request, set an `Idempotency-Key` header on your request."
+- "If you retry a request with the same idempotency key within 24 hours from the original request,
+  Knock will return the same response as the original request."
+- "Idempotency is currently supported on a limited set of endpoints. Today, only
+  `POST /workflows/:key/trigger` accepts the `Idempotency-Key` header" — sending it elsewhere has no
+  effect.
+- The key is "a unique string of up to 255 characters" and may be "random UUIDs, or they can have
+  some meaning in your application."
+- "Knock only caches successful responses (`2xx`). Requests that return a `4xx` or `5xx` response
+  are not stored" — so a failed trigger is safe to retry.
+- "Idempotent requests are expected to be identical. To prevent accidental misuse, Knock returns an
+  error when incoming parameters don't match those from the original request."
+- A replay is visible in the response headers: `original-x-request-id` and `idempotent-replayed: true`.
+
+Source: <https://docs.knock.app/api-reference/overview/idempotent-requests>
+
+This is the right tool for Cadence, and it is free: the key should be derived from the domain event,
+not generated per request. Both of Cadence's notifications have a natural one — the id of the staff
+reply, and the id of the Refund Request decision. `question-reply:{answerId}` and
+`refund-decided:{refundRequestId}` are stable across a user double-submit, an action replay, a retry
+after a timeout, and a `fetch` the server completed but the client never saw. A random UUID minted
+inside the trigger call would defeat the whole point.
+
+Caveat to record: the window is **24 hours**. It covers retries and accidental double-fires; it does
+not make the trigger permanently once-only. If a Refund Request could be decided, undecided and
+re-decided days later, that is a second notification by design — and arguably the correct one.
+
+### What `cancellation_key` is not
+
+`cancellation_key` appears in the trigger body and is easy to mistake for a dedupe key. It is not
+one. It is "a unique identifier for the workflow run" that you later pass to the cancel API to stop
+a run mid-flight; the docs note that a `204` from cancel "only means Knock has successfully enqueued
+the cancellation request, not that the cancellation has been performed." The cancellation docs say
+nothing about a repeated `cancellation_key` deduplicating, and it does not.
+Sources: <https://docs.knock.app/send-notifications/canceling-workflows>,
+<https://docs.knock.app/api-reference/workflows/trigger>
+
+For Cadence, `cancellation_key` only becomes interesting if a workflow ever gains a delay step —
+e.g. "notify after 10 minutes unless the Student has already read the reply." There is no such step
+today.
+
+### The adjacent tool: the batch function
+
+Separate from idempotency, Knock workflows can include a batch step: "A batch function collects
+notifications that have to do with the same subject, so you can send fewer notifications to your
+users", collapsing N triggers in a window into one message, optionally grouped by a batch key. The
+window "open[s] from the **first** time the batch is triggered".
+Source: <https://docs.knock.app/designing-workflows/batch-function>
+
+Noted for completeness, not recommended: at two notifications with no fan-in, batching would mainly
+add a delay before a Student sees that staff replied. `Idempotency-Key` is the correct answer to the
+question this ticket asked.
