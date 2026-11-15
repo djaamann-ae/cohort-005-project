@@ -352,3 +352,68 @@ Source: <https://docs.suprsend.com/docs/email>
 **Could not verify.** Whether `socketHost` defaulting to a host named `betainbox.suprsend.com` says
 anything about the feed's maturity — that is an inference from a hostname, not a documented fact,
 and should not be treated as one.
+
+### Engagespot
+
+Not on the ticket's candidate list; found while looking for "anything else credible". Docs reachable
+2026-11-15.
+
+**In-app feed.** Yes, and it is the headline channel — the SDK is literally named "In-App Inbox".
+The headless core models a `NotificationList` exposing `unreadCount` and `totalCount`, and
+`NotificationItem` exposing `markAsRead()`, `markAsUnRead()`, `markAsUnSeen()` and `delete()`, so
+read/seen state is vendor-persisted per recipient.
+Source: <https://docs.engagespot.co/docs/sdks-n-libraries/frontend/using-javascript-core-api/>
+
+**React components.** Package `@engagespot/react-component` (v3.0.1 at time of reading), over
+`@engagespot/react-hooks` and `@engagespot/core`. The drop-in is a single `<Engagespot />` component
+(bell + feed panel):
+
+```jsx
+import { Engagespot } from '@engagespot/react-component';
+<Engagespot apiKey="ENGAGESPOT_API_KEY" userId="unique-id-of-your-user" dataRegion="us"
+            userToken="Required if secure auth is enabled" />
+```
+
+A headless path exists at both levels (`@engagespot/react-hooks`, and a framework-agnostic core JS
+API). Note `dataRegion` — "us" or "eu" — which is a data-residency lever the other vendors did not
+surface on the component.
+Sources: <https://docs.engagespot.co/docs/sdks-n-libraries/frontend/react/quick-start/>,
+<https://docs.engagespot.co/docs/sdks-n-libraries/frontend/using-javascript-core-api/>,
+<https://unpkg.com/@engagespot/react-component/package.json>
+
+**SSR.** Stated in the docs, and stated most bluntly of all the vendors here: "We need to render
+EngageSpot on the client." The Next.js guide gives two recipes — `'use client'` at the top of the
+component file for the App Router, and `dynamic(() => import('./EngageSpotNotification'), { ssr: false })`
+for the Pages Router. For React Router 8 that translates to a client-only island; there is no
+server-rendered path.
+Source: <https://docs.engagespot.co/docs/1.4.x/sdks-n-libraries/frontend/using-nextjs-component/>
+
+**Recipient/identity model.** "Every user should have a unique `identifier`. It could be the
+auto-increment id from your database, or any other unique value such as their Email or Phone
+number", and it must never change. Upsert is
+`PUT https://api.engagespot.co/v3/users/{identifier}`, authenticated with `X-ENGAGESPOT-API-KEY` and
+`X-ENGAGESPOT-API-SECRET` headers. Profile fields include `firstName`, `email` and `phoneNumber`
+(E.164). Inline identification at workflow-trigger time is supported, so no pre-sync pass is
+required.
+Mapping for Cadence: `users.id` → `identifier`; the browser gets `apiKey` + `userId`, plus a
+server-minted `userToken` JWT once secure auth mode is on — and the docs say secure auth "must be
+enabled for production applications".
+Sources: <https://docs.engagespot.co/docs/features/user/who-is-user/>,
+<https://docs.engagespot.co/docs/sdks-n-libraries/frontend/react/quick-start/>
+
+**Real-time.** Yes, WebSocket. The docs describe event listeners (`onNotificationReceive`,
+`onNotificationRead`, `onNotificationSee`, `onNotificationDelete`) but never name the transport;
+`@engagespot/core@3.0.1` depends on `socket.io-client ^4.7.5` and its bundle pins
+`transports:["websocket"]`, i.e. socket.io with the HTTP long-polling fallback disabled.
+Sources: <https://docs.engagespot.co/docs/sdks-n-libraries/frontend/using-javascript-core-api/>,
+<https://unpkg.com/@engagespot/core/package.json>,
+<https://unpkg.com/@engagespot/core@3.0.1/dist/esm/index.js>
+
+**Email door.** Open, same bring-your-own-provider shape. Per-provider setup pages exist for
+SendGrid ("Engagespot uses SendGrid API to deliver your notifications", configured with an
+`API_KEY`), Amazon SES (IAM user with `SendEmail`, access key/secret/region/verified from-address),
+Resend, MailerSend and generic SMTP, with per-send configuration overrides.
+Sources: <https://docs.engagespot.co/docs/features/channels/email/sendgrid-provider/>,
+<https://docs.engagespot.co/docs/features/channels/email/ses/>,
+<https://docs.engagespot.co/docs/features/channels/email/resend/>,
+<https://docs.engagespot.co/docs/features/channels/email/smtp-provider/>
