@@ -1,8 +1,8 @@
 import { Outlet } from "react-router";
 import type { Route } from "./+types/layout.app";
 import { Sidebar } from "~/components/sidebar";
-import type { KnockConfig } from "~/components/notification-feed";
 import { DevUI } from "~/components/dev-ui";
+import { getKnockConfig } from "~/lib/knock.server";
 import { Toaster } from "sonner";
 import { getCurrentUserId, getDevCountry } from "~/lib/session";
 import { getCountryTierInfo, COUNTRIES } from "~/lib/ppp";
@@ -22,22 +22,6 @@ import {
 
 function getAllUsers() {
   return db.select().from(users).all();
-}
-
-/**
- * The public half of Knock's configuration, on its way to the browser — there
- * is no other route for an environment variable to get there.
- *
- * Both halves or nothing: without either one the Feed cannot load, and the
- * sidebar is better off with no bell than with a dead one.
- */
-function getKnockConfig(): KnockConfig | null {
-  const publicApiKey = process.env.KNOCK_PUBLIC_API_KEY;
-  const feedChannelId = process.env.KNOCK_FEED_CHANNEL_ID;
-
-  if (!publicApiKey || !feedChannelId) return null;
-
-  return { publicApiKey, feedChannelId };
 }
 
 function getUserById(id: number) {
