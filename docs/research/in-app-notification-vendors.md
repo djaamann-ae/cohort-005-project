@@ -159,3 +159,56 @@ Resend, Postmark, Brevo, Sinch Mailgun, Mailjet, SparkPost, Mandrill, Outlook 36
 MailerSend, Mailtrap, Netcore, Plunk, Anypost, an Email Webhook and custom SMTP. Multi-provider is
 supported.
 Source: <https://docs.novu.co/platform/integrations/email>
+
+### Courier
+
+Docs reachable 2026-11-15.
+
+**In-app feed.** Yes — Courier **Inbox**, "an embeddable in-app notification center", with "unread
+counts and badges", "read and archive actions" and message-level buttons. "Every state change (read,
+opened, archived) syncs instantly across a user's signed-in devices", so state is vendor-persisted
+per recipient, not per device.
+Source: <https://www.courier.com/docs/platform/inbox/>
+
+**React components.** Current package is `@trycourier/courier-react` (v9) for React 18+, with
+`@trycourier/courier-react-17` for React 17. Components: `<CourierInbox />`,
+`<CourierInboxPopupMenu />`, `<CourierToast />`, `<CourierPreferences />`. Headless path is the
+`useCourier()` hook, which returns `{ shared, auth, inbox, toast, preferences }` for building custom
+UI. Note that the older `@trycourier/courier-react` monorepo (`trycourier/courier-react` on GitHub,
+packages `react-inbox`, `react-provider`, `react-hooks`, `react-toast`) is **deprecated** — its
+README opens with "🚨 THIS PROJECT HAS MOVED 🚨 / This repository is deprecated", pointing at the v9
+SDK. Anything we find referring to `CourierProvider` / `@trycourier/react-inbox` is the old
+generation.
+Sources: <https://www.courier.com/docs/platform/inbox/>,
+<https://www.courier.com/docs/sdk-libraries/courier-react-web>,
+<https://raw.githubusercontent.com/trycourier/courier-react/main/README.md>
+
+**SSR.** Courier is the one vendor here that states it outright in prose: "Courier Inbox and Toast
+support Next.js but render client-side only", and for Next.js 13+ "add `'use client'` at the top of
+component files". For Cadence that reads as: usable in a React Router 8 SSR app, but the inbox is a
+client-only island — no server markup.
+Source: <https://www.courier.com/docs/sdk-libraries/courier-react-web>
+
+**Recipient/identity model.** "A user is the stored record Courier uses to reach one person." The
+`user_id` is "the id your own system already uses for that person" — any string, no mapping table.
+Create/update is one upsert call, `POST /profiles/{user_id}`, with a body of
+`{ "profile": { email, phone_number, locale, custom: { ... } } }`; omitted fields are preserved, so
+it is safe to run on every change to our own row. Profile fields are addressable in templates as
+`{profile.name}`, `{profile.custom.company}`.
+One extra moving part versus Knock/Novu: the browser SDK authenticates with a **JWT minted
+server-side** — `auth.signIn({ userId, jwt })`. That means a Cadence loader/resource route that
+mints a Courier token for the signed-in user, not just passing a public key plus user id.
+Sources: <https://www.courier.com/docs/platform/users/>,
+<https://www.courier.com/docs/sdk-libraries/courier-react-web>
+
+**Real-time.** Yes, WebSocket, but **opt-in in code**: "Call `inbox.listenForUpdates()` after you
+authenticate. It opens the WebSocket connection required for real-time updates." Without that call
+the inbox loads once and does not update.
+Source: <https://www.courier.com/docs/sdk-libraries/courier-react-web>
+
+**Email door.** Left open, same orchestration-not-delivery shape. "Courier isn't an email provider.
+It sends through the providers you connect, such as Amazon SES, SendGrid, Postmark, or Resend, and
+adds templates, user preferences, message logs, and more channels on top." Listed providers include
+Amazon SES, SendGrid, Postmark, Mailgun, Resend, SMTP, Mandrill, SparkPost, Mailjet, MailerSend,
+Amply, Gmail and OneSignal, with provider failover.
+Source: <https://www.courier.com/docs/platform/channels/email/>
