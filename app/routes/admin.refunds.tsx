@@ -128,11 +128,16 @@ export async function action({ request }: Route.ActionArgs) {
     return data({ error: result.error }, { status: result.status });
   }
 
-  await sendEmail(result.email);
-
   // The decision has already committed, so a Knock outage costs the Platform
   // Admin nothing: sendNotification swallows and logs its own failures.
+  //
+  // It goes first because sendEmail does not: a Postmark outage throws out of
+  // this action, and behind it the Notification would never fire — leaving the
+  // buyer with neither record of a decision that has already happened. The
+  // email staying unguarded is deliberate and has its own issue.
   await sendNotification(result.notification);
+
+  await sendEmail(result.email);
 
   return {
     success: true,
