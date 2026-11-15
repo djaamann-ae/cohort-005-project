@@ -166,6 +166,14 @@ describe("raising a Refund Request", () => {
     expect(result).toMatchObject({ ok: true, kind: "individual_purchase" });
   });
 
+  it("notifies nobody — the Feed records outcomes, not the buyer's own clicks", () => {
+    const purchase = buyForSelf(base.user.id);
+
+    const result = raiseRefundRequest(db, purchase.id, base.user.id, "Nope.", NOW);
+
+    expect(result).not.toHaveProperty("notification");
+  });
+
   it("refuses anyone but the buyer", () => {
     const purchase = buyForSelf(base.user.id);
     const someoneElse = addLearner("Ben");
@@ -367,6 +375,47 @@ describe("approving a Refund Request", () => {
     expect(result.email.subject).toBe("Refund approved — Test Course");
     expect(result.email.body).toContain("$79.00");
   });
+
+  it("notifies the buyer of the decision, naming no Platform Admin", () => {
+    const purchase = buyForSelf(base.user.id);
+    const id = raise(purchase.id, base.user.id);
+
+    const result = approveRefundRequest(
+      db,
+      id,
+      platformAdmin.id,
+      "Your money is on its way.",
+      NOW
+    );
+
+    if (!result.ok) throw new Error(result.error);
+    expect(result.notification).toEqual({
+      workflow: "refund-request-decided",
+      recipient: { id: String(base.user.id), name: "Test User" },
+      idempotencyKey: `refund-decision:${id}`,
+      data: {
+        decision: "approved",
+        courseTitle: "Test Course",
+        decisionNote: "Your money is on its way.",
+        actionUrl: "/settings",
+      },
+    });
+  });
+
+  it("notifies the Team Admin who bought a Team Licence", () => {
+    const priya = addLearner("Priya");
+    const { purchase } = buySeats(priya.id, 2);
+    const id = raise(purchase.id, priya.id);
+
+    const result = approveRefundRequest(db, id, platformAdmin.id, null, NOW);
+
+    if (!result.ok) throw new Error(result.error);
+    expect(result.notification.recipient).toEqual({
+      id: String(priya.id),
+      name: "Priya",
+    });
+    expect(result.notification.data.decisionNote).toBeNull();
+  });
 });
 
 describe("declining a Refund Request", () => {
@@ -396,6 +445,32 @@ describe("declining a Refund Request", () => {
     expect(result.email.body).toContain("You finished the course.");
     expect(isEnrolled(base.user.id)).toBe(true);
     expect(checkRefundRequest(db, purchase.id, base.user.id, NOW).ok).toBe(true);
+  });
+
+  it("notifies the buyer of the decision, carrying the note and naming no Platform Admin", () => {
+    const purchase = buyForSelf(base.user.id);
+    const id = raise(purchase.id, base.user.id);
+
+    const result = declineRefundRequest(
+      db,
+      id,
+      platformAdmin.id,
+      "  You finished the course.  ",
+      NOW
+    );
+
+    if (!result.ok) throw new Error(result.error);
+    expect(result.notification).toEqual({
+      workflow: "refund-request-decided",
+      recipient: { id: String(base.user.id), name: "Test User" },
+      idempotencyKey: `refund-decision:${id}`,
+      data: {
+        decision: "declined",
+        courseTitle: "Test Course",
+        decisionNote: "You finished the course.",
+        actionUrl: "/settings",
+      },
+    });
   });
 
   it("frees a Team Licence's Seats again", () => {

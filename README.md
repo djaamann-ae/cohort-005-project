@@ -84,6 +84,24 @@ You don't need these yet, but you'll be asked for them along the way. Both have 
 - **[Knock](https://knock.app/)**, a free Developer account, when you build notifications. Its keys go in `.env`, which is gitignored.
 - **[tldraw](https://www.tldraw.com/)**, for whiteboarding your tasks. Any drawing app will do.
 
+## Environment Variables
+
+All of these are optional. Cadence runs without any of them — each has a local
+fallback — so you can work on unrelated features with no third-party accounts,
+and CI needs none of them. They live in `.env` at the repo root, which is
+gitignored.
+
+| Variable                | What it is                                                      | Without it                                                               |
+| ----------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `KNOCK_API_KEY`         | Knock secret key (`sk_…`), server-side. Triggers notifications. | Notifications are skipped and logged; everything else works normally.    |
+| `KNOCK_PUBLIC_API_KEY`  | Knock public key (`pk_…`), browser-safe. Renders the Feed.      | The notification bell is not rendered at all, rather than rendered dead. |
+| `POSTMARK_SERVER_TOKEN` | Postmark server token. Sends transactional email.               | Each email is written to `.outbox/` as JSON instead of being sent.       |
+
+Both Knock keys come from one environment of a Knock project (Development, for
+local work) — see [Knock](https://knock.app/), whose free Developer account is
+enough. A workflow must be **committed** to that environment before Cadence can
+trigger it, or the trigger returns `404 workflow_missing`.
+
 ## Scripts
 
 | Command                      | Description                                  |
