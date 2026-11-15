@@ -3,6 +3,8 @@ import { useState, useEffect } from "react";
 import { cn } from "~/lib/utils";
 import { UserRole } from "~/db/schema";
 import { UserAvatar } from "~/components/user-avatar";
+import { NotificationBell } from "~/components/notification-bell";
+import type { KnockConfig } from "~/components/notification-feed";
 import {
   BookOpen,
   ChartColumn,
@@ -41,6 +43,8 @@ interface SidebarProps {
   currentUser: CurrentUser | null;
   recentCourses?: RecentCourse[];
   isTeamAdmin?: boolean;
+  /** Null when Knock is not configured — then there is no bell at all. */
+  knock?: KnockConfig | null;
 }
 
 interface NavItem {
@@ -117,6 +121,7 @@ export function Sidebar({
   currentUser,
   recentCourses = [],
   isTeamAdmin = false,
+  knock = null,
 }: SidebarProps) {
   const currentUserRole = currentUser?.role ?? null;
   const [isDark, setIsDark] = useState(false);
@@ -143,6 +148,9 @@ export function Sidebar({
       </div>
 
       <nav className="flex-1 space-y-1 p-3">
+        {currentUser && knock && (
+          <NotificationBell config={knock} userId={currentUser.id} />
+        )}
         {navItems
           .filter((item) => isVisible(item, currentUserRole))
           .map((item) => (

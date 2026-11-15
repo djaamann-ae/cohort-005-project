@@ -95,12 +95,17 @@ gitignored.
 | ----------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | `KNOCK_API_KEY`         | Knock secret key (`sk_…`), server-side. Triggers notifications. | Notifications are skipped and logged; everything else works normally.    |
 | `KNOCK_PUBLIC_API_KEY`  | Knock public key (`pk_…`), browser-safe. Renders the Feed.      | The notification bell is not rendered at all, rather than rendered dead. |
+| `KNOCK_FEED_CHANNEL_ID` | Knock in-app feed channel id, browser-safe. Names the Feed.     | The notification bell is not rendered at all, rather than rendered dead. |
 | `POSTMARK_SERVER_TOKEN` | Postmark server token. Sends transactional email.               | Each email is written to `.outbox/` as JSON instead of being sent.       |
 
-Both Knock keys come from one environment of a Knock project (Development, for
-local work) — see [Knock](https://knock.app/), whose free Developer account is
-enough. A workflow must be **committed** to that environment before Cadence can
-trigger it, or the trigger returns `404 workflow_missing`.
+All three Knock values come from one environment of a Knock project
+(Development, for local work) — see [Knock](https://knock.app/), whose free
+Developer account is enough. The keys are under Developers → API keys; the
+feed channel id is under Integrations → the in-app feed channel. The bell needs
+**both** `KNOCK_PUBLIC_API_KEY` and `KNOCK_FEED_CHANNEL_ID`: with either one
+missing there is no bell, because a dead bell is worse than an absent one. A
+workflow must be **committed** to that environment before Cadence can trigger
+it, or the trigger returns `404 workflow_missing`.
 
 ## Scripts
 
