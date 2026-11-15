@@ -22,6 +22,7 @@ import {
 } from "~/lib/refunds.server";
 import { RULE_BREAK_LABELS } from "~/lib/refund-rules";
 import { sendEmail } from "~/lib/mailer.server";
+import { sendNotification } from "~/lib/notifications.server";
 
 const refundFilterSchema = z
   .nativeEnum(RefundStatus)
@@ -126,6 +127,15 @@ export async function action({ request }: Route.ActionArgs) {
   if (!result.ok) {
     return data({ error: result.error }, { status: result.status });
   }
+
+  // The decision has already committed, so a Knock outage costs the Platform
+  // Admin nothing: sendNotification swallows and logs its own failures.
+  //
+  // It goes first because sendEmail does not: a Postmark outage throws out of
+  // this action, and behind it the Notification would never fire — leaving the
+  // buyer with neither record of a decision that has already happened. The
+  // email staying unguarded is deliberate and has its own issue.
+  await sendNotification(result.notification);
 
   await sendEmail(result.email);
 

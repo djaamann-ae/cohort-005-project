@@ -6,10 +6,17 @@ import { getCurrentUserId } from "~/lib/session";
 import { getAccess, requireContentAccess } from "~/lib/access.server";
 import { renderComment } from "~/lib/comment-markdown.server";
 import {
-  CommentThread,
+  LessonDiscussion,
   type RenderedComment,
 } from "~/components/comment-thread";
 import { MIN_COMMENT_LENGTH, MAX_COMMENT_LENGTH } from "~/lib/comments";
+import {
+  createComment,
+  getCommentById,
+  getCourseForLesson,
+} from "~/lib/comments.server";
+import { sendNotification } from "~/lib/notifications.server";
+import { enrollmentEndedByRefund } from "~/lib/refunds.server";
 import { db } from "~/db";
 import {
   categories,
@@ -308,25 +315,6 @@ function calculateWatchProgress(
   return Math.min(Math.round((maxPosition / videoDurationSeconds) * 100), 100);
 }
 
-function getCourseForLesson(lessonId: number) {
-  return db
-    .select({
-      courseId: courses.id,
-      courseTitle: courses.title,
-      courseSlug: courses.slug,
-      instructorId: courses.instructorId,
-    })
-    .from(lessons)
-    .innerJoin(modules, eq(lessons.moduleId, modules.id))
-    .innerJoin(courses, eq(modules.courseId, courses.id))
-    .where(eq(lessons.id, lessonId))
-    .get();
-}
-
-function getCommentById(commentId: number) {
-  return db.select().from(comments).where(eq(comments.id, commentId)).get();
-}
-
 function assertValidBody(body: string) {
   const trimmed = body.trim();
   if (trimmed.length < MIN_COMMENT_LENGTH) {
@@ -341,7 +329,7 @@ function assertValidBody(body: string) {
 }
 
 function getLessonThread(lessonId: number): ThreadComment[] {
-  const course = getCourseForLesson(lessonId);
+  const course = getCourseForLesson(db, lessonId);
   if (!course) return [];
 
   const rows = db
@@ -401,43 +389,10 @@ function getLessonThread(lessonId: number): ThreadComment[] {
   return topLevel.filter((c) => !c.deleted || c.replies.length > 0);
 }
 
-function createComment(
-  userId: number,
-  lessonId: number,
-  parentId: number | null,
-  body: string
-) {
-  const trimmed = assertValidBody(body);
-
-  const course = getCourseForLesson(lessonId);
-  if (!course) {
-    throw new Error("Lesson not found");
-  }
-
-  if (parentId !== null) {
-    const parent = getCommentById(parentId);
-    if (!parent) {
-      throw new Error("Parent comment not found");
-    }
-    if (parent.lessonId !== lessonId) {
-      throw new Error("Parent comment belongs to a different lesson");
-    }
-    if (parent.parentId !== null) {
-      throw new Error("Replies can only be one level deep");
-    }
-  }
-
-  return db
-    .insert(comments)
-    .values({ userId, lessonId, parentId, body: trimmed })
-    .returning()
-    .get();
-}
-
 function updateComment(commentId: number, userId: number, body: string) {
   const trimmed = assertValidBody(body);
 
-  const existing = getCommentById(commentId);
+  const existing = getCommentById(db, commentId);
   if (!existing) {
     throw new Error("Comment not found");
   }
@@ -457,7 +412,7 @@ function updateComment(commentId: number, userId: number, body: string) {
 }
 
 function deleteComment(commentId: number, userId: number, isStaff: boolean) {
-  const existing = getCommentById(commentId);
+  const existing = getCommentById(db, commentId);
   if (!existing) {
     throw new Error("Comment not found");
   }
@@ -765,6 +720,15 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   const { pppBlocked, pppBlockedCountry, pppPurchaseCountry, canViewContent } =
     access;
 
+  // A Notification outlives the Enrollment it was about, so clicking an old one
+  // can land a Student on a lesson whose thread they can no longer read. The
+  // approved Refund Request is the record that their Enrollment ended; progress
+  // rows are not, because a Student can be refunded without accruing any.
+  const enrollmentEnded =
+    currentUserId !== null &&
+    !canViewContent &&
+    enrollmentEndedByRefund(db, currentUserId, course.id);
+
   // Comments are confidential to the course: only people who can read the
   // lesson can read the discussion on it.
   const instructor = getUserById(course.instructorId);
@@ -864,6 +828,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     pppPurchaseCountry,
     comments,
     canViewContent,
+    enrollmentEnded,
     canModerate: access.isStaff,
     instructorName: instructor?.name ?? "your instructor",
   };
@@ -900,12 +865,19 @@ export async function action({ params, request }: Route.ActionArgs) {
         if (!parsed.success) {
           return { ok: false, error: "Enter a comment before posting." };
         }
-        createComment(
+        const { notification } = createComment(
+          db,
           currentUserId,
           lessonId,
           parsed.data.parentId ?? null,
           parsed.data.body
         );
+        // The comment has already committed, so a Knock outage costs the
+        // Student nothing but the Notification: sendNotification swallows
+        // and logs its own failures.
+        if (notification) {
+          await sendNotification(notification);
+        }
         return { ok: true };
       }
 
@@ -916,7 +888,7 @@ export async function action({ params, request }: Route.ActionArgs) {
         }
         // Scope the id to this lesson so a comment elsewhere can't be reached
         // by posting its id to this route.
-        const existing = getCommentById(parsed.data.commentId);
+        const existing = getCommentById(db, parsed.data.commentId);
         if (!existing || existing.lessonId !== lessonId) {
           throw data("Comment not found", { status: 404 });
         }
@@ -928,7 +900,7 @@ export async function action({ params, request }: Route.ActionArgs) {
       if (!parsed.success) {
         return { ok: false, error: "Could not delete that comment." };
       }
-      const existing = getCommentById(parsed.data.commentId);
+      const existing = getCommentById(db, parsed.data.commentId);
       if (!existing || existing.lessonId !== lessonId) {
         throw data("Comment not found", { status: 404 });
       }
@@ -1028,6 +1000,7 @@ export default function LessonViewer({ loaderData }: Route.ComponentProps) {
     pppPurchaseCountry,
     comments,
     canViewContent,
+    enrollmentEnded,
     canModerate,
     instructorName,
   } = loaderData;
@@ -1240,16 +1213,17 @@ export default function LessonViewer({ loaderData }: Route.ComponentProps) {
             </div>
           )}
 
-          {/* Questions & Discussion — confidential to people with access */}
-          {canViewContent && (
-            <CommentThread
-              comments={comments}
-              currentUserId={currentUserId}
-              canModerate={canModerate}
-              canPost
-              instructorName={instructorName}
-            />
-          )}
+          {/* Questions & Discussion — confidential to people with access, and
+              a plain reason in its place for anyone else */}
+          <LessonDiscussion
+            canViewContent={canViewContent}
+            enrollmentEnded={enrollmentEnded}
+            courseSlug={course.slug}
+            comments={comments}
+            currentUserId={currentUserId}
+            canModerate={canModerate}
+            instructorName={instructorName}
+          />
 
           {/* Prev/Next Navigation */}
           <div className="flex items-center justify-between border-t pt-6">

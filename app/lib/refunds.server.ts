@@ -18,6 +18,10 @@ import {
 } from "~/db/schema";
 import { formatPrice } from "~/lib/utils";
 import {
+  buildNotification,
+  type RefundDecidedNotification,
+} from "~/lib/notifications.server";
+import {
   REFUND_COMPLETION_LIMIT,
   REFUND_WATCH_LIMIT_SECONDS,
   REFUND_WINDOW_DAYS,
@@ -566,9 +570,83 @@ export function listTeamLicences(db: Queryable, buyerId: number, now: Date) {
   });
 }
 
+/**
+ * Did this Student's Enrollment on this course end with an approved refund?
+ *
+ * Approving is the moment an Enrollment ends (docs/adr/0002), and approval is
+ * written on the Refund Request itself — so the Refund Request is the record of
+ * it. The Enrollment row is gone and progress is no evidence either way: a
+ * Student may be refunded without ever having watched a thing (docs/adr/0001
+ * keeps progress, it does not promise any), and a Student blocked by PPP still
+ * holds the Enrollment they cannot use.
+ */
+export function enrollmentEndedByRefund(
+  db: Queryable,
+  userId: number,
+  courseId: number
+): boolean {
+  const approved = db
+    .select({ id: refunds.id })
+    .from(refunds)
+    .innerJoin(purchases, eq(refunds.purchaseId, purchases.id))
+    .where(
+      and(
+        eq(purchases.userId, userId),
+        eq(purchases.courseId, courseId),
+        eq(refunds.status, RefundStatus.Approved)
+      )
+    )
+    .get();
+
+  return approved !== undefined;
+}
+
 // ─── Deciding a Refund Request ───
 
-export type DecisionResult = { ok: true; email: Email } | Failure;
+export type DecisionResult =
+  | { ok: true; email: Email; notification: RefundDecidedNotification }
+  | Failure;
+
+/**
+ * The Notification the buyer gets once their Refund Request is decided. It
+ * names no Platform Admin: a platform decision must not become an argument
+ * with an individual. The data is a snapshot of this moment, so renaming the
+ * course later does not rewrite the buyer's history.
+ */
+function buildDecisionNotification(
+  db: Queryable,
+  refundRequestId: number,
+  purchase: Purchase,
+  decision: RefundStatus.Approved | RefundStatus.Declined,
+  note: string | null
+): RefundDecidedNotification {
+  const buyer = db
+    .select()
+    .from(users)
+    .where(eq(users.id, purchase.userId))
+    .get();
+  const course = db
+    .select()
+    .from(courses)
+    .where(eq(courses.id, purchase.courseId))
+    .get();
+
+  const outcome =
+    decision === RefundStatus.Approved ? "approved" : "declined";
+
+  return buildNotification({
+    workflow: "refund-request-decided",
+    recipient: { id: purchase.userId, name: buyer?.name },
+    event: { name: "refund-decision", id: refundRequestId },
+    // Where the buyer's Refund Requests and the decision note actually render.
+    path: "/settings",
+    data: {
+      decision: outcome,
+      courseTitle: course?.title ?? "your course",
+      decisionNote: note,
+    },
+  });
+}
 
 function findOpenRefundRequest(
   tx: Queryable,
@@ -680,6 +758,13 @@ export function approveRefundRequest(
     return {
       ok: true,
       email: buildDecisionEmail(tx, purchase, RefundStatus.Approved, note),
+      notification: buildDecisionNotification(
+        tx,
+        refundRequestId,
+        purchase,
+        RefundStatus.Approved,
+        note
+      ),
     };
   });
 }
@@ -724,6 +809,13 @@ export function declineRefundRequest(
       ok: true,
       email: buildDecisionEmail(
         tx,
+        found.purchase,
+        RefundStatus.Declined,
+        trimmedNote
+      ),
+      notification: buildDecisionNotification(
+        tx,
+        refundRequestId,
         found.purchase,
         RefundStatus.Declined,
         trimmedNote

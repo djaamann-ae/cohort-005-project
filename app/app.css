@@ -144,3 +144,10 @@
   width: 50%;
   animation: loading-bar-shimmer 1.2s ease-in-out infinite;
 }
+/* Notification panel — Knock paints its own surface, and its colour mode is a
+   separate switch from Cadence's dark class. Both are driven together in
+   notification-feed.tsx; this keeps the panel's own backdrop in step so its
+   corners do not stay white behind a dark Feed. */
+.dark {
+  --rnf-notification-feed-popover-bg-color: #2e2f34;
+}

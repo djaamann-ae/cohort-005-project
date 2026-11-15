@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { useFetcher } from "react-router";
+import { Link, useFetcher } from "react-router";
 import { toast } from "sonner";
-import { MessageSquare, Pencil, Reply, Trash2 } from "lucide-react";
+import { Lock, MessageSquare, Pencil, Reply, Trash2 } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent } from "~/components/ui/card";
 import { Textarea } from "~/components/ui/textarea";
@@ -335,6 +335,66 @@ function Replies({
         />
       ))}
     </div>
+  );
+}
+
+/**
+ * The lesson's discussion, in whatever state the Student is entitled to see.
+ *
+ * A Notification outlives the Enrollment that let the Student read the thread
+ * it points at, so clicking an old one can land a Student here whose Enrollment
+ * has ended, with nothing to read. Saying so beats hiding the thread silently:
+ * the Student came for an answer and deserves to know where it went, and
+ * somewhere to go next.
+ *
+ * Only they are told anything. A visitor who was never enrolled has no
+ * Notification pointing here and nothing to explain, so the thread is simply
+ * not part of their page — who may reach a lesson is settled elsewhere.
+ */
+export function LessonDiscussion({
+  canViewContent,
+  enrollmentEnded,
+  courseSlug,
+  ...thread
+}: {
+  /** May they read the thread at all? */
+  canViewContent: boolean;
+  /** Did they hold an Enrollment on this course that has since ended? */
+  enrollmentEnded: boolean;
+  courseSlug: string;
+  comments: RenderedComment[];
+  currentUserId: number | null;
+  canModerate: boolean;
+  instructorName: string;
+}) {
+  if (canViewContent) {
+    return <CommentThread {...thread} canPost />;
+  }
+
+  if (!enrollmentEnded) return null;
+
+  return (
+    <Card className="mb-8">
+      <CardContent className="p-6 text-center">
+        <Lock className="mx-auto size-6 text-muted-foreground" />
+        <h2 className="mt-3 text-lg font-semibold">
+          Your Enrollment on this course has ended
+        </h2>
+        <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
+          Questions and discussion stay with the course, so this lesson&apos;s
+          thread is no longer open to you. Your Notifications about it stay in
+          your Feed &mdash; losing access doesn&apos;t unmake what happened.
+        </p>
+        <div className="mt-5 flex items-center justify-center gap-3">
+          <Link to={`/courses/${courseSlug}`}>
+            <Button variant="outline">Back to Course</Button>
+          </Link>
+          <Link to="/courses">
+            <Button>Browse Courses</Button>
+          </Link>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

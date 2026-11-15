@@ -7,6 +7,7 @@ import {
   approveRefundRequest,
   checkRefundRequest,
   declineRefundRequest,
+  enrollmentEndedByRefund,
   getRefundOffer,
   getSeatAvailability,
   listRefundRequestsForBuyer,
@@ -164,6 +165,14 @@ describe("raising a Refund Request", () => {
     const result = raiseRefundRequest(db, purchase.id, base.user.id, "Nope.", NOW);
 
     expect(result).toMatchObject({ ok: true, kind: "individual_purchase" });
+  });
+
+  it("notifies nobody — the Feed records outcomes, not the buyer's own clicks", () => {
+    const purchase = buyForSelf(base.user.id);
+
+    const result = raiseRefundRequest(db, purchase.id, base.user.id, "Nope.", NOW);
+
+    expect(result).not.toHaveProperty("notification");
   });
 
   it("refuses anyone but the buyer", () => {
@@ -367,6 +376,47 @@ describe("approving a Refund Request", () => {
     expect(result.email.subject).toBe("Refund approved — Test Course");
     expect(result.email.body).toContain("$79.00");
   });
+
+  it("notifies the buyer of the decision, naming no Platform Admin", () => {
+    const purchase = buyForSelf(base.user.id);
+    const id = raise(purchase.id, base.user.id);
+
+    const result = approveRefundRequest(
+      db,
+      id,
+      platformAdmin.id,
+      "Your money is on its way.",
+      NOW
+    );
+
+    if (!result.ok) throw new Error(result.error);
+    expect(result.notification).toEqual({
+      workflow: "refund-request-decided",
+      recipient: { id: String(base.user.id), name: "Test User" },
+      idempotencyKey: `refund-decision:${id}`,
+      data: {
+        decision: "approved",
+        courseTitle: "Test Course",
+        decisionNote: "Your money is on its way.",
+        actionUrl: "/settings",
+      },
+    });
+  });
+
+  it("notifies the Team Admin who bought a Team Licence", () => {
+    const priya = addLearner("Priya");
+    const { purchase } = buySeats(priya.id, 2);
+    const id = raise(purchase.id, priya.id);
+
+    const result = approveRefundRequest(db, id, platformAdmin.id, null, NOW);
+
+    if (!result.ok) throw new Error(result.error);
+    expect(result.notification.recipient).toEqual({
+      id: String(priya.id),
+      name: "Priya",
+    });
+    expect(result.notification.data.decisionNote).toBeNull();
+  });
 });
 
 describe("declining a Refund Request", () => {
@@ -396,6 +446,32 @@ describe("declining a Refund Request", () => {
     expect(result.email.body).toContain("You finished the course.");
     expect(isEnrolled(base.user.id)).toBe(true);
     expect(checkRefundRequest(db, purchase.id, base.user.id, NOW).ok).toBe(true);
+  });
+
+  it("notifies the buyer of the decision, carrying the note and naming no Platform Admin", () => {
+    const purchase = buyForSelf(base.user.id);
+    const id = raise(purchase.id, base.user.id);
+
+    const result = declineRefundRequest(
+      db,
+      id,
+      platformAdmin.id,
+      "  You finished the course.  ",
+      NOW
+    );
+
+    if (!result.ok) throw new Error(result.error);
+    expect(result.notification).toEqual({
+      workflow: "refund-request-decided",
+      recipient: { id: String(base.user.id), name: "Test User" },
+      idempotencyKey: `refund-decision:${id}`,
+      data: {
+        decision: "declined",
+        courseTitle: "Test Course",
+        decisionNote: "You finished the course.",
+        actionUrl: "/settings",
+      },
+    });
   });
 
   it("frees a Team Licence's Seats again", () => {
@@ -500,5 +576,42 @@ describe("listing Refund Requests", () => {
       { seatCount: 2, claimedSeatCount: 1, canRequestRefund: false },
       { seatCount: 2, claimedSeatCount: 0, canRequestRefund: true },
     ]);
+  });
+});
+
+describe("an Enrollment that ended with an approved refund", () => {
+  it("is recorded by the approved Refund Request, with no progress needed", () => {
+    // The journey the Lapsed card exists for: enrolled, asked a question,
+    // refunded — and never watched a thing.
+    const purchase = buyForSelf(base.user.id);
+    const id = raise(purchase.id, base.user.id);
+    approveRefundRequest(db, id, platformAdmin.id, null, NOW);
+
+    expect(enrollmentEndedByRefund(db, base.user.id, base.course.id)).toBe(true);
+  });
+
+  it("is not claimed while the Refund Request is still Open", () => {
+    const purchase = buyForSelf(base.user.id);
+    raise(purchase.id, base.user.id);
+
+    expect(enrollmentEndedByRefund(db, base.user.id, base.course.id)).toBe(
+      false
+    );
+  });
+
+  it("is not claimed when the Refund Request was declined", () => {
+    const purchase = buyForSelf(base.user.id);
+    const id = raise(purchase.id, base.user.id);
+    declineRefundRequest(db, id, platformAdmin.id, "Past half way.", NOW);
+
+    expect(enrollmentEndedByRefund(db, base.user.id, base.course.id)).toBe(
+      false
+    );
+  });
+
+  it("is not claimed for someone who simply never bought the course", () => {
+    expect(enrollmentEndedByRefund(db, addLearner("Ash").id, base.course.id)).toBe(
+      false
+    );
   });
 });

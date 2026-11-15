@@ -12,7 +12,15 @@ import { Textarea } from "~/components/ui/textarea";
 import { UserAvatar } from "~/components/user-avatar";
 import { AlertTriangle, CheckCircle2, ExternalLink } from "lucide-react";
 import { cn, daysSince, formatRelativeTime } from "~/lib/utils";
-import { MIN_COMMENT_LENGTH, MAX_COMMENT_LENGTH } from "~/lib/comments";
+import { MAX_COMMENT_LENGTH } from "~/lib/comments";
+import {
+  answersForTheCourse,
+  createComment,
+  getCommentById,
+  getCourseForLesson,
+  type CreateCommentResult,
+} from "~/lib/comments.server";
+import { sendNotification } from "~/lib/notifications.server";
 import { parseFormData } from "~/lib/validation";
 import { db } from "~/db";
 import {
@@ -23,7 +31,7 @@ import {
   users,
   UserRole,
 } from "~/db/schema";
-import { eq, ne, or, and, isNull, notExists, sql, desc } from "drizzle-orm";
+import { eq, ne, and, isNull, notExists, sql, desc } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 
 type QueuedQuestion = {
@@ -44,7 +52,10 @@ function getUnansweredQuestions(instructorId: number | null): QueuedQuestion[] {
   const reply = alias(comments, "reply");
   const replyAuthor = alias(users, "reply_author");
 
-  // Correlated: matches a live reply, by staff, to the outer question.
+  // Correlated: matches a live reply, by staff, to the outer question. The
+  // staff condition comes from comments.server, which also decides whether a
+  // reply notifies — so the queue and the Feed cannot disagree about what
+  // counts as an answer.
   const staffReply = db
     .select({ one: sql`1` })
     .from(reply)
@@ -53,9 +64,10 @@ function getUnansweredQuestions(instructorId: number | null): QueuedQuestion[] {
       and(
         eq(reply.parentId, comments.id),
         isNull(reply.deletedAt),
-        or(
-          eq(replyAuthor.role, UserRole.Admin),
-          eq(reply.userId, courses.instructorId)
+        answersForTheCourse(
+          replyAuthor.role,
+          reply.userId,
+          courses.instructorId
         )
       )
     );
@@ -96,66 +108,6 @@ function getUnansweredQuestions(instructorId: number | null): QueuedQuestion[] {
     .all();
 }
 
-function getCommentById(commentId: number) {
-  return db.select().from(comments).where(eq(comments.id, commentId)).get();
-}
-
-function getCourseForLesson(lessonId: number) {
-  return db
-    .select({
-      courseId: courses.id,
-      courseTitle: courses.title,
-      courseSlug: courses.slug,
-      instructorId: courses.instructorId,
-    })
-    .from(lessons)
-    .innerJoin(modules, eq(lessons.moduleId, modules.id))
-    .innerJoin(courses, eq(modules.courseId, courses.id))
-    .where(eq(lessons.id, lessonId))
-    .get();
-}
-
-function createComment(
-  userId: number,
-  lessonId: number,
-  parentId: number | null,
-  body: string
-) {
-  const trimmed = body.trim();
-  if (trimmed.length < MIN_COMMENT_LENGTH) {
-    throw new Error("Comment cannot be empty");
-  }
-  if (trimmed.length > MAX_COMMENT_LENGTH) {
-    throw new Error(
-      `Comment must be ${MAX_COMMENT_LENGTH} characters or fewer`
-    );
-  }
-
-  const course = getCourseForLesson(lessonId);
-  if (!course) {
-    throw new Error("Lesson not found");
-  }
-
-  if (parentId !== null) {
-    const parent = getCommentById(parentId);
-    if (!parent) {
-      throw new Error("Parent comment not found");
-    }
-    if (parent.lessonId !== lessonId) {
-      throw new Error("Parent comment belongs to a different lesson");
-    }
-    if (parent.parentId !== null) {
-      throw new Error("Replies can only be one level deep");
-    }
-  }
-
-  return db
-    .insert(comments)
-    .values({ userId, lessonId, parentId, body: trimmed })
-    .returning()
-    .get();
-}
-
 // A question sitting this long without an answer gets called out visually.
 const STALE_AFTER_DAYS = 3;
 
@@ -193,12 +145,12 @@ export async function action({ request }: Route.ActionArgs) {
     return { ok: false, error: "Enter a reply before posting." };
   }
 
-  const question = getCommentById(parsed.data.commentId);
+  const question = getCommentById(db, parsed.data.commentId);
   if (!question) {
     throw data("Question not found", { status: 404 });
   }
 
-  const course = getCourseForLesson(question.lessonId);
+  const course = getCourseForLesson(db, question.lessonId);
   if (!course) {
     throw data("Course not found", { status: 404 });
   }
@@ -207,9 +159,17 @@ export async function action({ request }: Route.ActionArgs) {
   // instructor, or an admin.
   const access = await requireStaff(request, course.courseId);
 
+  // requireStaff rejects a request with no user, so this only reassures the
+  // type checker.
+  if (access.userId === null) {
+    throw data("Select a user from the DevUI panel to reply.", { status: 401 });
+  }
+
+  let reply: CreateCommentResult;
   try {
-    createComment(
-      access.userId!,
+    reply = createComment(
+      db,
+      access.userId,
       question.lessonId,
       question.id,
       parsed.data.body
@@ -219,6 +179,14 @@ export async function action({ request }: Route.ActionArgs) {
       return { ok: false, error: error.message };
     }
     throw error;
+  }
+
+  const { notification } = reply;
+
+  // The reply has already committed, so a Knock outage costs the Student
+  // nothing but the Notification: sendNotification swallows and logs.
+  if (notification) {
+    await sendNotification(notification);
   }
 
   return { ok: true };
