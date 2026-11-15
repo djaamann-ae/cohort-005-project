@@ -17,6 +17,7 @@ import {
   RefundStatus,
 } from "~/db/schema";
 import { formatPrice } from "~/lib/utils";
+import type { RefundDecidedNotification } from "~/lib/notifications.server";
 import {
   REFUND_COMPLETION_LIMIT,
   REFUND_WATCH_LIMIT_SECONDS,
@@ -568,7 +569,53 @@ export function listTeamLicences(db: Queryable, buyerId: number, now: Date) {
 
 // ─── Deciding a Refund Request ───
 
-export type DecisionResult = { ok: true; email: Email } | Failure;
+export type DecisionResult =
+  | { ok: true; email: Email; notification: RefundDecidedNotification }
+  | Failure;
+
+/**
+ * The Notification the buyer gets once their Refund Request is decided. It
+ * names no Platform Admin: a platform decision must not become an argument
+ * with an individual. The data is a snapshot of this moment, so renaming the
+ * course later does not rewrite the buyer's history.
+ */
+function buildDecisionNotification(
+  db: Queryable,
+  refundRequestId: number,
+  purchase: Purchase,
+  decision: RefundStatus.Approved | RefundStatus.Declined,
+  note: string | null
+): RefundDecidedNotification {
+  const buyer = db
+    .select()
+    .from(users)
+    .where(eq(users.id, purchase.userId))
+    .get();
+  const course = db
+    .select()
+    .from(courses)
+    .where(eq(courses.id, purchase.courseId))
+    .get();
+
+  return {
+    workflow: "refund-request-decided",
+    recipient: {
+      id: String(purchase.userId),
+      name: buyer?.name ?? "there",
+    },
+    // Derived from the Refund Request, so a replayed trigger creates no
+    // second Notification.
+    idempotencyKey: `refund-decision:${refundRequestId}`,
+    data: {
+      decision:
+        decision === RefundStatus.Approved ? "approved" : "declined",
+      courseTitle: course?.title ?? "your course",
+      decisionNote: note,
+      // A leading slash: Knock joins it onto its own app_url.
+      actionUrl: "/settings",
+    },
+  };
+}
 
 function findOpenRefundRequest(
   tx: Queryable,
@@ -680,6 +727,13 @@ export function approveRefundRequest(
     return {
       ok: true,
       email: buildDecisionEmail(tx, purchase, RefundStatus.Approved, note),
+      notification: buildDecisionNotification(
+        tx,
+        refundRequestId,
+        purchase,
+        RefundStatus.Approved,
+        note
+      ),
     };
   });
 }
@@ -724,6 +778,13 @@ export function declineRefundRequest(
       ok: true,
       email: buildDecisionEmail(
         tx,
+        found.purchase,
+        RefundStatus.Declined,
+        trimmedNote
+      ),
+      notification: buildDecisionNotification(
+        tx,
+        refundRequestId,
         found.purchase,
         RefundStatus.Declined,
         trimmedNote
