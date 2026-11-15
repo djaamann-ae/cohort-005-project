@@ -3,6 +3,14 @@ import { useState, useEffect } from "react";
 import { cn } from "~/lib/utils";
 import { UserRole } from "~/db/schema";
 import { UserAvatar } from "~/components/user-avatar";
+// PROTOTYPE (wayfinder #8) — throwaway, lives only on prototype/notification-surface.
+import {
+  useNotifPrototype,
+  VariantA,
+  VariantB,
+  VariantC,
+  NotifPrototypeSwitcher,
+} from "~/components/notification-prototype";
 import {
   BookOpen,
   ChartColumn,
@@ -120,6 +128,8 @@ export function Sidebar({
 }: SidebarProps) {
   const currentUserRole = currentUser?.role ?? null;
   const [isDark, setIsDark] = useState(false);
+  // PROTOTYPE (wayfinder #8) — inert unless ?notif=A|B|C is in the URL.
+  const notif = useNotifPrototype();
 
   useEffect(() => {
     setIsDark(document.documentElement.classList.contains("dark"));
@@ -162,6 +172,9 @@ export function Sidebar({
               {item.label}
             </NavLink>
           ))}
+        {/* PROTOTYPE (wayfinder #8) */}
+        {notif.variant === "A" && <VariantA feed={notif.feed} />}
+        {notif.variant === "C" && <VariantC feed={notif.feed} />}
         {isTeamAdmin && (
           <NavLink
             to="/team"
@@ -179,6 +192,10 @@ export function Sidebar({
           </NavLink>
         )}
       </nav>
+
+      {/* PROTOTYPE (wayfinder #8) */}
+      {notif.variant === "B" && <VariantB feed={notif.feed} />}
+      <NotifPrototypeSwitcher />
 
       {recentCourses.length > 0 && (
         <div className="border-t border-sidebar-border p-3">
