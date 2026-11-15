@@ -38,7 +38,23 @@ export type RefundDecidedNotification = Descriptor<
   }
 >;
 
-export type Notification = RefundDecidedNotification;
+/**
+ * The course's Instructor or a Platform Admin answered the Student's question.
+ * The actor travels here in `data`, never as an identified Knock actor: only
+ * Students who receive Notifications are ever identified into Knock, and the
+ * surface renders the actor from this snapshot with Cadence's own avatar.
+ */
+export type StaffRepliedNotification = Descriptor<
+  "staff-replied-to-question",
+  {
+    actorName: string;
+    courseTitle: string;
+    lessonTitle: string;
+    actionUrl: string;
+  }
+>;
+
+export type Notification = RefundDecidedNotification | StaffRepliedNotification;
 
 export interface Notifier {
   trigger(notification: Notification): Promise<void>;

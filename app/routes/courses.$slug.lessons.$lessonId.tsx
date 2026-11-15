@@ -11,6 +11,7 @@ import {
 } from "~/components/comment-thread";
 import { MIN_COMMENT_LENGTH, MAX_COMMENT_LENGTH } from "~/lib/comments";
 import { createComment } from "~/lib/comments.server";
+import { sendNotification } from "~/lib/notifications.server";
 import { db } from "~/db";
 import {
   categories,
@@ -868,13 +869,19 @@ export async function action({ params, request }: Route.ActionArgs) {
         if (!parsed.success) {
           return { ok: false, error: "Enter a comment before posting." };
         }
-        createComment(
+        const { notification } = createComment(
           db,
           currentUserId,
           lessonId,
           parsed.data.parentId ?? null,
           parsed.data.body
         );
+        // The comment has already committed, so a Knock outage costs the
+        // Student nothing but the Notification: sendNotification swallows
+        // and logs its own failures.
+        if (notification) {
+          await sendNotification(notification);
+        }
         return { ok: true };
       }
 
