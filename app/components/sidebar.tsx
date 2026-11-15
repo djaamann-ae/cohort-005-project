@@ -148,7 +148,11 @@ export function Sidebar({
       </div>
 
       <nav className="flex-1 space-y-1 p-3">
-        {currentUser && knock && (
+        {/* A Feed is a Student's surface. An Instructor works from
+            /instructor/questions and a Platform Admin from /admin/refunds;
+            giving them a Feed as well would be a second surface to disagree
+            with the first. */}
+        {currentUser?.role === UserRole.Student && knock && (
           <NotificationBell config={knock} userId={currentUser.id} />
         )}
         {navItems
