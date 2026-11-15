@@ -56,6 +56,42 @@ export type StaffRepliedNotification = Descriptor<
 
 export type Notification = RefundDecidedNotification | StaffRepliedNotification;
 
+/** The domain events Cadence notifies about. The idempotency key starts here. */
+type NotifiableEvent = "comment-reply" | "refund-decision";
+
+/**
+ * Builds a Notification, so the three conventions every one of them follows
+ * live here rather than in each caller:
+ *
+ * - the recipient is a Cadence `users.id` as a string, with only a name
+ *   alongside, and a row that has gone missing still gets a usable greeting;
+ * - the idempotency key derives from the domain event and its id, never from a
+ *   generated one, so a replayed trigger creates no second Notification;
+ * - `actionUrl` is a bare path with a leading slash, because Knock's template
+ *   joins it onto the environment's `app_url`.
+ *
+ * The caller supplies only what is theirs: which workflow renders it, who it
+ * is for, which event it is about, where it points, and the snapshot.
+ */
+export function buildNotification<Workflow extends string, Data>(input: {
+  workflow: Workflow;
+  recipient: { id: number; name: string | null | undefined };
+  event: { name: NotifiableEvent; id: number };
+  /** App-relative, with a leading slash. */
+  path: string;
+  data: Data;
+}): Descriptor<Workflow, Data & { actionUrl: string }> {
+  return {
+    workflow: input.workflow,
+    recipient: {
+      id: String(input.recipient.id),
+      name: input.recipient.name ?? "there",
+    },
+    idempotencyKey: `${input.event.name}:${input.event.id}`,
+    data: { ...input.data, actionUrl: input.path },
+  };
+}
+
 export interface Notifier {
   trigger(notification: Notification): Promise<void>;
 }

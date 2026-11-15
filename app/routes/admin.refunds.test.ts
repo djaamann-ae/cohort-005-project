@@ -21,7 +21,12 @@ vi.mock("~/db", async () => {
 
 vi.mock("~/lib/mailer.server", () => ({ sendEmail: vi.fn() }));
 
-vi.mock("~/lib/notifications.server", () => ({ sendNotification: vi.fn() }));
+vi.mock("~/lib/notifications.server", async (importOriginal) => ({
+  // Only the trigger is swapped; building a Notification is the thing under
+  // test and stays real.
+  ...(await importOriginal<typeof import("~/lib/notifications.server")>()),
+  sendNotification: vi.fn(),
+}));
 
 const NOW = new Date(2026, 9, 6, 12, 0, 0);
 

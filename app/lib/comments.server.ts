@@ -11,7 +11,10 @@ import {
   UserRole,
 } from "~/db/schema";
 import { MIN_COMMENT_LENGTH, MAX_COMMENT_LENGTH } from "~/lib/comments";
-import type { StaffRepliedNotification } from "~/lib/notifications.server";
+import {
+  buildNotification,
+  type StaffRepliedNotification,
+} from "~/lib/notifications.server";
 
 // ─── Comments ───
 // Writing a comment on a lesson: a question, or a reply to one. Both the
@@ -170,21 +173,16 @@ function buildStaffReplyNotification(
   const asker = getUserById(db, question.userId);
   const actor = getUserById(db, reply.userId);
 
-  return {
+  return buildNotification({
     workflow: "staff-replied-to-question",
-    recipient: {
-      id: String(question.userId),
-      name: asker?.name ?? "there",
-    },
-    // Derived from the reply itself, so a double-submitted reply produces one
-    // Notification.
-    idempotencyKey: `comment-reply:${reply.id}`,
+    recipient: { id: question.userId, name: asker?.name },
+    // Keyed on the reply, so a double-submitted one produces one Notification.
+    event: { name: "comment-reply", id: reply.id },
+    path: `/courses/${course.courseSlug}/lessons/${reply.lessonId}`,
     data: {
       actorName: actor?.name ?? "Cadence",
       courseTitle: course.courseTitle,
       lessonTitle: course.lessonTitle,
-      // A leading slash: Knock joins it onto its own app_url.
-      actionUrl: `/courses/${course.courseSlug}/lessons/${reply.lessonId}`,
     },
-  };
+  });
 }

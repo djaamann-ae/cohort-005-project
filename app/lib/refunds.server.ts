@@ -17,7 +17,10 @@ import {
   RefundStatus,
 } from "~/db/schema";
 import { formatPrice } from "~/lib/utils";
-import type { RefundDecidedNotification } from "~/lib/notifications.server";
+import {
+  buildNotification,
+  type RefundDecidedNotification,
+} from "~/lib/notifications.server";
 import {
   REFUND_COMPLETION_LIMIT,
   REFUND_WATCH_LIMIT_SECONDS,
@@ -628,24 +631,21 @@ function buildDecisionNotification(
     .where(eq(courses.id, purchase.courseId))
     .get();
 
-  return {
+  const outcome =
+    decision === RefundStatus.Approved ? "approved" : "declined";
+
+  return buildNotification({
     workflow: "refund-request-decided",
-    recipient: {
-      id: String(purchase.userId),
-      name: buyer?.name ?? "there",
-    },
-    // Derived from the Refund Request, so a replayed trigger creates no
-    // second Notification.
-    idempotencyKey: `refund-decision:${refundRequestId}`,
+    recipient: { id: purchase.userId, name: buyer?.name },
+    event: { name: "refund-decision", id: refundRequestId },
+    // Where the buyer's Refund Requests and the decision note actually render.
+    path: "/settings",
     data: {
-      decision:
-        decision === RefundStatus.Approved ? "approved" : "declined",
+      decision: outcome,
       courseTitle: course?.title ?? "your course",
       decisionNote: note,
-      // A leading slash: Knock joins it onto its own app_url.
-      actionUrl: "/settings",
     },
-  };
+  });
 }
 
 function findOpenRefundRequest(
