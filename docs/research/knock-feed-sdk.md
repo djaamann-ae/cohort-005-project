@@ -610,3 +610,99 @@ sentence frame per workflow (two of them). Two residual risks the ADR does not m
 2. **The template and the trigger are versioned separately.** Renaming a `data` key in Cadence is a
    breaking change to a document that lives at Knock, is not in this repo's git history, and does
    not go through review. Keeping the key set small and boring is the mitigation for the mitigation.
+
+## 6. Read/unread mechanics — what marks a Notification read, and is it configurable?
+
+Knock tracks `seen_at`, `read_at`, `clicked_at`, `interacted_at`, `link_clicked_at` and
+`archived_at` per feed item. "Model Notification in Cadence's language"
+([#4](https://github.com/djaamann-ae/cohort-005-project/issues/4)) settled that Cadence surfaces
+read/unread only, so the job here is to find which gestures move `read_at` and which only move
+`seen_at`.
+Source: <https://raw.githubusercontent.com/knocklabs/javascript/main/packages/client/src/clients/feed/interfaces.ts>
+
+### Opening the popover marks **seen**, not read
+
+```tsx
+const defaultOnOpen = ({ store, feedClient }: OnOpenOptions) => {
+  if (store.metadata.unseen_count > 0) { feedClient.markAllAsSeen(); }
+};
+```
+
+and `onOpen` defaults to it. The docs say the same and name the override: "By default, items are
+marked as 'seen' when the popover opens. To switch to 'read' status, implement an `onOpen` callback
+that filters unread items and calls `feedClient.markAsRead()`." So **yes, configurable** — `onOpen`
+is an ordinary prop receiving `{ store, feedClient }`, and passing
+`onOpen={({ store, feedClient }) => feedClient.markAsRead(store.items.filter(i => !i.read_at))}`
+makes "open the panel" mean read.
+Sources:
+<https://raw.githubusercontent.com/knocklabs/javascript/main/packages/react/src/modules/feed/components/NotificationFeedPopover/NotificationFeedPopover.tsx>,
+<https://docs.knock.app/in-app-ui/react/feed>
+
+### Clicking an item marks **read**
+
+The cell's container click handler fires first, unconditionally:
+
+```tsx
+feedClient.markAsInteracted(item, { type: "cell_click", action: actionUrl });
+```
+
+and `markAsInteracted` sets both timestamps optimistically and decrements the unread badge:
+
+```ts
+this.optimisticallyPerformStatusUpdate(itemOrItems, "interacted",
+  { read_at: now, interacted_at: now }, "unread_count");
+return this.makeStatusUpdate(itemOrItems, "interacted", metadata);
+```
+
+The same handler runs on `Enter` (the cell is `tabIndex={0}` with a keydown handler), and button
+clicks in the Multi-action variant call `markAsInteracted` with `type: "button_click"`. The unread
+dot is driven directly off the field: `{!item.read_at && <div className="rnf-notification-cell__unread-dot" />}`.
+Sources:
+<https://raw.githubusercontent.com/knocklabs/javascript/main/packages/react/src/modules/feed/components/NotificationCell/NotificationCell.tsx>,
+<https://raw.githubusercontent.com/knocklabs/javascript/main/packages/client/src/clients/feed/feed.ts>
+
+Important: this is **not** switched off by `onNotificationClick`. The custom handler runs *after*
+`markAsInteracted`, so Cadence can take over navigation (see §5) without losing read tracking — and
+conversely, cannot opt out of "click marks read" except by replacing the cell entirely via
+`renderItem`.
+
+### A third gesture: "Mark all as read" in the feed header
+
+`NotificationFeedHeader` always renders a `MarkAsRead` button, which calls
+`feedClient.markAllAsRead()` and is `disabled` when `metadata.unread_count === 0`. Any
+`onMarkAllAsReadClick` passed to `NotificationFeed` runs in addition, not instead. The header also
+renders a status `Dropdown` over `FilterStatus.All | Unread | Read`.
+Sources:
+<https://raw.githubusercontent.com/knocklabs/javascript/main/packages/react/src/modules/feed/components/NotificationFeed/MarkAsRead.tsx>,
+<https://raw.githubusercontent.com/knocklabs/javascript/main/packages/react/src/modules/feed/components/NotificationFeed/NotificationFeedHeader.tsx>,
+<https://raw.githubusercontent.com/knocklabs/javascript/main/packages/react-core/src/modules/core/constants.ts>
+
+To remove it, pass `renderHeader`. Note `markAllAsRead` carries a documented race in source: "if a
+new message comes in during this window before the update has been processed we'll effectively reset
+the `unread_count` to be what it was."
+
+### Also present, also unmodelled: archive
+
+Every cell renders an `ArchiveButton` by default (`rnf-archive-notification-btn`), calling
+`markAsArchived`, and the default feed options are `{ archived: "exclude", mode: "compact" }` — so
+an archived Notification disappears from the feed. Cadence's model has no archive. Either accept it
+as a Knock-side nicety that silently removes items, or pass `archiveButton={null}`-equivalent via a
+custom cell. Worth a deliberate decision in
+[#8](https://github.com/djaamann-ae/cohort-005-project/issues/8) rather than a default.
+Source: <https://raw.githubusercontent.com/knocklabs/javascript/main/packages/client/src/clients/feed/feed.ts>
+
+### The decision Cadence has to make
+
+The default configuration has two state axes (`seen`, `read`) and a default badge
+(`badgeCountType="unseen"`) driven by the axis Cadence does **not** model. Out of the box this reads
+oddly: a Student opens the panel, the badge clears, but every item still shows an unread dot and
+`unread_count` is unchanged. To present a single read/unread axis, pick one of:
+
+- **Badge on unread, read on click** (smallest change): `badgeCountType="unread"`, leave `onOpen`
+  alone. `seen` keeps being tracked at Knock and is simply never surfaced. The badge then clears
+  item by item as the Student clicks — which is the usual meaning of an unread count.
+- **Badge on unread, read on open**: `badgeCountType="unread"` plus the `onOpen` override above.
+  Opening the panel clears everything at once, and "unread" effectively means "not yet looked at".
+
+Either is a one-prop change; both are supported by documented props. This is a design input for
+[#8](https://github.com/djaamann-ae/cohort-005-project/issues/8), not something the SDK forces.
