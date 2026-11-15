@@ -13,7 +13,8 @@ import { UserAvatar } from "~/components/user-avatar";
 import { AlertTriangle, CheckCircle2, ExternalLink } from "lucide-react";
 import { cn, daysSince, formatRelativeTime } from "~/lib/utils";
 import { MAX_COMMENT_LENGTH } from "~/lib/comments";
-import { createComment } from "~/lib/comments.server";
+import { answersForTheCourse, createComment } from "~/lib/comments.server";
+import { sendNotification } from "~/lib/notifications.server";
 import { parseFormData } from "~/lib/validation";
 import { db } from "~/db";
 import {
@@ -24,7 +25,7 @@ import {
   users,
   UserRole,
 } from "~/db/schema";
-import { eq, ne, or, and, isNull, notExists, sql, desc } from "drizzle-orm";
+import { eq, ne, and, isNull, notExists, sql, desc } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 
 type QueuedQuestion = {
@@ -45,7 +46,10 @@ function getUnansweredQuestions(instructorId: number | null): QueuedQuestion[] {
   const reply = alias(comments, "reply");
   const replyAuthor = alias(users, "reply_author");
 
-  // Correlated: matches a live reply, by staff, to the outer question.
+  // Correlated: matches a live reply, by staff, to the outer question. The
+  // staff condition comes from comments.server, which also decides whether a
+  // reply notifies — so the queue and the Feed cannot disagree about what
+  // counts as an answer.
   const staffReply = db
     .select({ one: sql`1` })
     .from(reply)
@@ -54,9 +58,10 @@ function getUnansweredQuestions(instructorId: number | null): QueuedQuestion[] {
       and(
         eq(reply.parentId, comments.id),
         isNull(reply.deletedAt),
-        or(
-          eq(replyAuthor.role, UserRole.Admin),
-          eq(reply.userId, courses.instructorId)
+        answersForTheCourse(
+          replyAuthor.role,
+          reply.userId,
+          courses.instructorId
         )
       )
     );
@@ -167,19 +172,32 @@ export async function action({ request }: Route.ActionArgs) {
   // instructor, or an admin.
   const access = await requireStaff(request, course.courseId);
 
+  // requireStaff rejects a request with no user, so this only reassures the
+  // type checker.
+  if (access.userId === null) {
+    throw data("Select a user from the DevUI panel to reply.", { status: 401 });
+  }
+
+  let notification;
   try {
-    createComment(
+    notification = createComment(
       db,
-      access.userId!,
+      access.userId,
       question.lessonId,
       question.id,
       parsed.data.body
-    );
+    ).notification;
   } catch (error) {
     if (error instanceof Error) {
       return { ok: false, error: error.message };
     }
     throw error;
+  }
+
+  // The reply has already committed, so a Knock outage costs the Student
+  // nothing but the Notification: sendNotification swallows and logs.
+  if (notification) {
+    await sendNotification(notification);
   }
 
   return { ok: true };
