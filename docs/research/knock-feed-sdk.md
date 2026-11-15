@@ -334,3 +334,90 @@ One cosmetic gap worth knowing: `styles.css` defines `.rnf-notification-feed-pop
 `NotificationFeedPopover.tsx` never renders an arrow element. There is no caret pointing back at the
 anchor, from any placement.
 Source: <https://raw.githubusercontent.com/knocklabs/javascript/main/packages/react/src/modules/feed/components/NotificationFeedPopover/NotificationFeedPopover.tsx>
+
+## 3. Unread counts — is there a cheap badge-only path?
+
+**Short answer: no dedicated counts endpoint, but the cost is one request either way, and after that
+the counts ride the websocket.**
+
+### Where the number comes from
+
+`UnseenBadge` reads it from the feed store, not from a call of its own:
+
+```tsx
+function selectBadgeCount(badgeCountType: BadgeCountType, metadata: FeedMetadata): number {
+  switch (badgeCountType) {
+    case "all":    return metadata.total_count;
+    case "unread": return metadata.unread_count;
+    case "unseen": return metadata.unseen_count;
+  }
+}
+…
+const badgeCountValue = useFeedStore((state) => selectBadgeCount(badgeCountType, state.metadata));
+return badgeCountValue !== 0 ? ( … ) : null;
+```
+
+`NotificationIconButton` just forwards its `badgeCountType` prop (default `"unseen"`) to
+`UnseenBadge`. Counts above nine render as `"9+"` (`formatBadgeCount`: `count > 9 ? "9+" : count`).
+Sources:
+<https://raw.githubusercontent.com/knocklabs/javascript/main/packages/react/src/modules/feed/components/UnseenBadge/UnseenBadge.tsx>,
+<https://raw.githubusercontent.com/knocklabs/javascript/main/packages/react/src/modules/feed/components/NotificationIconButton/NotificationIconButton.tsx>,
+<https://raw.githubusercontent.com/knocklabs/javascript/main/packages/react-core/src/modules/core/utils.ts>
+
+That `metadata` is populated by the ordinary feed fetch. The API returns counts in the same payload
+as the items:
+
+```
+GET /v1/users/{user_id}/feeds/{id}
+…
+"meta": { "total_count": 100, "unread_count": 10, "unseen_count": 5 }
+```
+
+Knock's API reference documents **no counts-only endpoint** for a feed — `meta` and `entries` come
+together. Nor does `@knocklabs/client` expose one: `UserClient` has `get`, `identify`,
+preferences, channel data and guides; `MessageClient` has `get`, `updateStatus`, `removeStatus`,
+`batchUpdateStatuses`, `bulkUpdateAllStatusesInChannel`. Nothing count-shaped.
+Sources: <https://docs.knock.app/api-reference/users/feeds/list_items>,
+<https://raw.githubusercontent.com/knocklabs/javascript/main/packages/client/src/clients/users/index.ts>,
+<https://raw.githubusercontent.com/knocklabs/javascript/main/packages/client/src/clients/messages/index.ts>
+
+### The cheap-ish options that do exist
+
+- **Shrink the page.** `FeedClientOptions.page_size` (default 50) and `mode` (`"compact"` by
+  default, which drops `activities`, `total_activities`, nested `data` and extra actors) are both
+  settable through `KnockFeedProvider`'s `defaultFeedOptions`. `{ page_size: 1 }` gets the counts
+  for the cost of one item. The catch: `defaultFeedOptions` is per feed client, and the same client
+  backs the popover list — so a tiny page size would also truncate the list, and a true badge-only
+  client means a second `useNotifications(knock, feedId, { page_size: 1 })` instance (its own store,
+  its own socket channel).
+  Sources:
+  <https://raw.githubusercontent.com/knocklabs/javascript/main/packages/client/src/clients/feed/interfaces.ts>,
+  <https://raw.githubusercontent.com/knocklabs/javascript/main/packages/react-core/src/modules/feed/context/KnockFeedProvider.tsx>
+- **Don't mount the list until the popover opens.** The fetch lives in `NotificationFeed`'s
+  `useEffect`, so a bell that renders `NotificationFeedPopover` only while open pays nothing until
+  the Student clicks. But then nothing populates `metadata` and the badge stays at zero — this
+  trades the badge away, so it is not useful here.
+- **Let the socket do it.** After the first fetch, new messages arrive over the websocket carrying
+  their own metadata, and the store is updated before any refetch:
+
+  ```ts
+  // Optimistically set the badge counts
+  const metadata = data[this.referenceId]?.metadata;
+  if (metadata) { state.setMetadata(metadata); }
+  ```
+
+  Mutations are optimistic too: `markAsSeen`/`markAsRead`/`markAsInteracted`/`markAsArchived` all
+  call `optimisticallyPerformStatusUpdate(..., "unseen_count" | "unread_count")` before the request
+  goes out. So the steady-state cost of the badge is zero extra HTTP requests.
+  Source: <https://raw.githubusercontent.com/knocklabs/javascript/main/packages/client/src/clients/feed/feed.ts>
+
+### Read for Cadence
+
+One feed fetch per page load per Student, returning up to 50 items to render a number that is almost
+always 0, 1 or 2. At Cadence's volume this is not worth engineering around — take the default feed
+client and the default `page_size`, and don't build a second badge-only client. The one deliberate
+choice to make is `badgeCountType`: `"unseen"` (the default) counts notifications the Student has
+not had *shown* to them and is cleared by opening the popover; `"unread"` is the one that matches
+"Model Notification in Cadence's language" ([#4](https://github.com/djaamann-ae/cohort-005-project/issues/4)),
+which settled that Cadence surfaces read/unread only. If the glossary says unread, pass
+`badgeCountType="unread"` — see §6, which is where the two diverge.
