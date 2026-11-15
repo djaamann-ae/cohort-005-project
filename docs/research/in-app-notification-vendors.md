@@ -92,3 +92,70 @@ Source: <https://docs.knock.app/integrations/email/overview>
 **Could not verify.** Whether `NotificationFeed` renders meaningful markup during an SSR pass (vs.
 an empty shell) — not stated in docs, and not determinable without running it. Deferred to
 [#6](https://github.com/djaamann-ae/cohort-005-project/issues/6).
+
+### Novu Cloud
+
+Docs reachable 2026-11-15.
+
+**In-app feed.** Yes — Novu calls it the **Inbox**, "a centralized place to view and manage
+notifications", which "automatically fetches user notifications and manages the real-time unread
+count". Per-notification state in the client model includes `read`, `seen`, `archived` and
+`snoozedUntil`, so read/unread is vendor-persisted.
+Sources: <https://docs.novu.co/platform/inbox/overview>,
+<https://raw.githubusercontent.com/novuhq/novu/next/packages/js/src/ws/socket.ts>
+
+**React components.** Package `@novu/react` (v3.19.2 at time of reading), requiring React 18.0.0 or
+later. Composable drop-ins: `<Inbox />`, `<Bell />`, `<Notifications />`, `<InboxContent />`,
+`<Preferences />`. Headless usage is first-class: `@novu/react/hooks` exports `NovuProvider`,
+`useNovu`, `useNotifications`, `useCounts`, `usePreferences`, and a set of subscription/channel
+hooks; `@novu/js` is the framework-agnostic client underneath.
+Sources: <https://docs.novu.co/platform/inbox/overview>,
+<https://raw.githubusercontent.com/novuhq/novu/next/packages/react/src/hooks/index.ts>,
+<https://raw.githubusercontent.com/novuhq/novu/next/packages/react/package.json>
+
+**SSR.** This is the sharpest finding on this axis, and it comes from the vendor's own source rather
+than its prose docs. `@novu/react`'s `package.json` declares a *browser* condition pointing at
+`dist/esm/index.js` and a *non-browser* (server) condition pointing at a separate
+`dist/esm/server/index.js`. That server build is a set of deliberate no-ops. Its source carries the
+comment:
+
+> Exporting all components from the components folder as empty functions to fix build errors in SSR.
+> This will be replaced with actual components when we implement the SSR components in `@novu/js/ui`
+
+`Inbox` on the server renders only a `<ShadowRootDetector />`; `InboxContent`, `Notifications` and
+`NotificationItem` and its parts are stubs that return `null`. Reading: Novu's Inbox is
+**client-only by construction** — it will not blow up a React Router SSR render (the server build
+exists precisely so it does not), but it also produces no server markup, and the UI itself is
+rendered into a shadow root on the client. Server-rendered inbox components are an acknowledged
+not-yet.
+Sources (vendor repo `novuhq/novu`, branch `next`, read 2026-11-15):
+<https://raw.githubusercontent.com/novuhq/novu/next/packages/react/src/server/index.tsx>,
+<https://raw.githubusercontent.com/novuhq/novu/next/packages/react/package.json>
+
+**Recipient/identity model.** A **subscriber**, "a notification recipient in Novu, identified by a
+unique `subscriberId`". The docs say the `subscriberId` must be "stable and unique within your
+system" and should align with your application's internal user ID. Fields split into structured user
+data (`email`, `phone`, `firstName`, `locale`), arbitrary custom JSON under `data`, and channel
+credentials (`deviceTokens`, `webhookUrl`). Three creation routes: just-in-time on
+`POST https://api.novu.co/v1/events/trigger` (Novu creates or updates the subscriber from the
+payload), explicit `POST https://api.novu.co/v2/subscribers`, and bulk
+`POST https://api.novu.co/v1/subscribers/bulk` (up to 500).
+Mapping for Cadence: `users.id` becomes `subscriberId` directly; no extra column needed, and no
+up-front sync pass is required because trigger-time upsert exists.
+Source: <https://docs.novu.co/platform/concepts/subscribers>
+
+**Real-time.** Yes, over a WebSocket. The docs say the `useNotifications` and `useCounts` hooks
+"automatically listen for real-time events". The transport is not named in the prose docs, but the
+client source is explicit: `@novu/js` uses `socket.io-client` against a production socket URL of
+`https://ws.novu.co`, emitting `notifications.notification_received`,
+`notifications.unseen_count_changed` and `notifications.unread_count_changed`.
+Sources: <https://docs.novu.co/platform/inbox/headless/api-reference>,
+<https://raw.githubusercontent.com/novuhq/novu/next/packages/js/src/ws/socket.ts>
+
+**Email door.** Left open, with the same shape as Knock. Email is a first-class channel, but "Novu
+does not send emails directly" — "You must set up each provider individually in the Novu dashboard
+to enable delivery through the Email channel." Listed providers include SendGrid, Amazon SES,
+Resend, Postmark, Brevo, Sinch Mailgun, Mailjet, SparkPost, Mandrill, Outlook 365, Infobip, Braze,
+MailerSend, Mailtrap, Netcore, Plunk, Anypost, an Email Webhook and custom SMTP. Multi-provider is
+supported.
+Source: <https://docs.novu.co/platform/integrations/email>
