@@ -212,3 +212,65 @@ adds templates, user preferences, message logs, and more channels on top." Liste
 Amazon SES, SendGrid, Postmark, Mailgun, Resend, SMTP, Mandrill, SparkPost, Mailjet, MailerSend,
 Amply, Gmail and OneSignal, with provider failover.
 Source: <https://www.courier.com/docs/platform/channels/email/>
+
+### MagicBell
+
+Docs reachable 2026-11-15.
+
+**In-app feed.** Yes, and it is the product's centre of gravity — MagicBell bills itself as "The
+Notification Inbox for web & mobile apps". The in-app channel docs: "The inbox displays a
+chronological list of notifications for the current user. It supports read/unread states,
+pagination, and real-time updates", and "Users can view, mark as read, archive, and delete
+notifications directly from the inbox."
+Sources: <https://www.magicbell.com/docs/>, <https://www.magicbell.com/docs/channels/in_app>
+
+**React components.** Package `@magicbell/react` (v1.14.0 on npm at time of reading). Components:
+`ContextProvider`, `FloatingInbox`, `Inbox`, `InlineNotification`, `ToastContainer`,
+`UserPreferences`, `WebPushButton`, `SlackButton`, `SlackbotButton`. The same component set is also
+published for Preact, Svelte and as Web Components — consistent with the components being generated
+from one source rather than hand-written per framework.
+`ContextProvider` takes a `token` (a **User JWT**), and the docs are explicit that you "generate
+these on your own server" via the Authentication API.
+Sources: <https://www.magicbell.com/docs/libraries/magicbell-react>, <https://unpkg.com/@magicbell/react/package.json>
+
+**SSR.** The docs say nothing about SSR, `"use client"` or client-only rendering — a documentation
+gap. The published package answers it, and answers it better than the others: every published
+component module begins with the literal `"use client";` directive (verified in
+`dist/esm/context-provider.js`, `dist/esm/inbox.js`, `dist/esm/floating-inbox.js` of
+`@magicbell/react@1.14.0`), and the realtime layer carries an explicit SSR guard — the socket is
+constructed with `startClosed: typeof window === "undefined" || typeof document === "undefined"`.
+So the socket will not try to open during a React Router server render. As with every other vendor
+here, the feed content itself still arrives on the client.
+Sources (published package, read 2026-11-15):
+<https://unpkg.com/@magicbell/react@1.14.0/dist/esm/context-provider.js>,
+<https://unpkg.com/@magicbell/react@1.14.0/dist/esm/inbox.js>,
+<https://unpkg.com/@magicbell/react@1.14.0/src/internal/stores/realtime-store.ts>
+
+**Recipient/identity model.** Different from the others: MagicBell keys on **either an email or an
+`external_id`**, and recommends the latter. "A unique user identifier is critical for effectively
+using MagicBell and maps to the user identifier you use in your app"; "an `external_id` is linked to
+your app's DB records (typically, the `user_id`), and once set for a user, it cannot be changed or
+unset"; "External IDs always take precedence over email when you specify both in the `recipients`
+key, when creating notifications." User writes are upserts: "if a user with the same identifier
+already exists, the existing user will be updated with the new data. If a user doesn't exist, a new
+user will be created." The docs warn to "choose and stick to one type of unique identifier for each
+user".
+Mapping for Cadence: set `external_id = users.id` and never use the email path. Note the
+immutability — "once set for a user, it cannot be changed or unset" — so the choice is one-way per
+user. Like Courier, the browser needs a server-minted User JWT.
+Sources: <https://www.magicbell.com/docs/primitive/user>, <https://www.magicbell.com/docs/libraries/magicbell-react>
+
+**Real-time.** Yes, WebSocket, on by default. The in-app channel docs: "When a new notification is
+created, it appears instantly in the user's inbox without requiring a page refresh." The transport
+is not named in the docs, but the package source names it: a `reconnecting-websocket` client against
+`wss://ws.magicbell.com`. (A docs navigation entry for an "EventSource" *integration* exists, but
+that page is a configuration stub about an inbound `source` field, not the feed's transport — do not
+read it as SSE.)
+Sources: <https://www.magicbell.com/docs/channels/in_app>,
+<https://unpkg.com/@magicbell/react@1.14.0/src/internal/stores/realtime-store.ts>,
+<https://www.magicbell.com/docs/integrations/eventsource>
+
+**Email door.** Open, but with the thinnest provider list of the four reachable vendors: "Delivery
+on the email channel is offered by the following providers: Amazon SES, SMTP, Mailgun, SendGrid,
+Ping Email." Again orchestration, not delivery — a separate ESP account is still required.
+Source: <https://www.magicbell.com/docs/channels/email>
