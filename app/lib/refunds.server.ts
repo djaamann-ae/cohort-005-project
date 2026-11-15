@@ -567,6 +567,37 @@ export function listTeamLicences(db: Queryable, buyerId: number, now: Date) {
   });
 }
 
+/**
+ * Did this Student's Enrollment on this course end with an approved refund?
+ *
+ * Approving is the moment an Enrollment ends (docs/adr/0002), and approval is
+ * written on the Refund Request itself — so the Refund Request is the record of
+ * it. The Enrollment row is gone and progress is no evidence either way: a
+ * Student may be refunded without ever having watched a thing (docs/adr/0001
+ * keeps progress, it does not promise any), and a Student blocked by PPP still
+ * holds the Enrollment they cannot use.
+ */
+export function enrollmentEndedByRefund(
+  db: Queryable,
+  userId: number,
+  courseId: number
+): boolean {
+  const approved = db
+    .select({ id: refunds.id })
+    .from(refunds)
+    .innerJoin(purchases, eq(refunds.purchaseId, purchases.id))
+    .where(
+      and(
+        eq(purchases.userId, userId),
+        eq(purchases.courseId, courseId),
+        eq(refunds.status, RefundStatus.Approved)
+      )
+    )
+    .get();
+
+  return approved !== undefined;
+}
+
 // ─── Deciding a Refund Request ───
 
 export type DecisionResult =

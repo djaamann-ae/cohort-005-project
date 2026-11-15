@@ -7,6 +7,7 @@ import {
   approveRefundRequest,
   checkRefundRequest,
   declineRefundRequest,
+  enrollmentEndedByRefund,
   getRefundOffer,
   getSeatAvailability,
   listRefundRequestsForBuyer,
@@ -575,5 +576,42 @@ describe("listing Refund Requests", () => {
       { seatCount: 2, claimedSeatCount: 1, canRequestRefund: false },
       { seatCount: 2, claimedSeatCount: 0, canRequestRefund: true },
     ]);
+  });
+});
+
+describe("an Enrollment that ended with an approved refund", () => {
+  it("is recorded by the approved Refund Request, with no progress needed", () => {
+    // The journey the Lapsed card exists for: enrolled, asked a question,
+    // refunded — and never watched a thing.
+    const purchase = buyForSelf(base.user.id);
+    const id = raise(purchase.id, base.user.id);
+    approveRefundRequest(db, id, platformAdmin.id, null, NOW);
+
+    expect(enrollmentEndedByRefund(db, base.user.id, base.course.id)).toBe(true);
+  });
+
+  it("is not claimed while the Refund Request is still Open", () => {
+    const purchase = buyForSelf(base.user.id);
+    raise(purchase.id, base.user.id);
+
+    expect(enrollmentEndedByRefund(db, base.user.id, base.course.id)).toBe(
+      false
+    );
+  });
+
+  it("is not claimed when the Refund Request was declined", () => {
+    const purchase = buyForSelf(base.user.id);
+    const id = raise(purchase.id, base.user.id);
+    declineRefundRequest(db, id, platformAdmin.id, "Past half way.", NOW);
+
+    expect(enrollmentEndedByRefund(db, base.user.id, base.course.id)).toBe(
+      false
+    );
+  });
+
+  it("is not claimed for someone who simply never bought the course", () => {
+    expect(enrollmentEndedByRefund(db, addLearner("Ash").id, base.course.id)).toBe(
+      false
+    );
   });
 });

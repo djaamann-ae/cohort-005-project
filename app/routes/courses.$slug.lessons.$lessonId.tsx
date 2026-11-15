@@ -12,6 +12,7 @@ import {
 import { MIN_COMMENT_LENGTH, MAX_COMMENT_LENGTH } from "~/lib/comments";
 import { createComment } from "~/lib/comments.server";
 import { sendNotification } from "~/lib/notifications.server";
+import { enrollmentEndedByRefund } from "~/lib/refunds.server";
 import { db } from "~/db";
 import {
   categories,
@@ -735,12 +736,13 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     access;
 
   // A Notification outlives the Enrollment it was about, so clicking an old one
-  // can land a Lapsed Student on a lesson whose thread they can no longer read.
-  // Lapsed, per the glossary: lost their Enrollment, still has progress on it.
-  const lapsed =
+  // can land a Student on a lesson whose thread they can no longer read. The
+  // approved Refund Request is the record that their Enrollment ended; progress
+  // rows are not, because a Student can be refunded without accruing any.
+  const enrollmentEnded =
     currentUserId !== null &&
     !canViewContent &&
-    getLessonProgressForCourse(currentUserId, course.id).length > 0;
+    enrollmentEndedByRefund(db, currentUserId, course.id);
 
   // Comments are confidential to the course: only people who can read the
   // lesson can read the discussion on it.
@@ -841,7 +843,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     pppPurchaseCountry,
     comments,
     canViewContent,
-    lapsed,
+    enrollmentEnded,
     canModerate: access.isStaff,
     instructorName: instructor?.name ?? "your instructor",
   };
@@ -1013,7 +1015,7 @@ export default function LessonViewer({ loaderData }: Route.ComponentProps) {
     pppPurchaseCountry,
     comments,
     canViewContent,
-    lapsed,
+    enrollmentEnded,
     canModerate,
     instructorName,
   } = loaderData;
@@ -1230,7 +1232,7 @@ export default function LessonViewer({ loaderData }: Route.ComponentProps) {
               a plain reason in its place for anyone else */}
           <LessonDiscussion
             canViewContent={canViewContent}
-            lapsed={lapsed}
+            enrollmentEnded={enrollmentEnded}
             courseSlug={course.slug}
             comments={comments}
             currentUserId={currentUserId}
