@@ -10,7 +10,11 @@ import {
   type RenderedComment,
 } from "~/components/comment-thread";
 import { MIN_COMMENT_LENGTH, MAX_COMMENT_LENGTH } from "~/lib/comments";
-import { createComment } from "~/lib/comments.server";
+import {
+  createComment,
+  getCommentById,
+  getCourseForLesson,
+} from "~/lib/comments.server";
 import { sendNotification } from "~/lib/notifications.server";
 import { enrollmentEndedByRefund } from "~/lib/refunds.server";
 import { db } from "~/db";
@@ -311,25 +315,6 @@ function calculateWatchProgress(
   return Math.min(Math.round((maxPosition / videoDurationSeconds) * 100), 100);
 }
 
-function getCourseForLesson(lessonId: number) {
-  return db
-    .select({
-      courseId: courses.id,
-      courseTitle: courses.title,
-      courseSlug: courses.slug,
-      instructorId: courses.instructorId,
-    })
-    .from(lessons)
-    .innerJoin(modules, eq(lessons.moduleId, modules.id))
-    .innerJoin(courses, eq(modules.courseId, courses.id))
-    .where(eq(lessons.id, lessonId))
-    .get();
-}
-
-function getCommentById(commentId: number) {
-  return db.select().from(comments).where(eq(comments.id, commentId)).get();
-}
-
 function assertValidBody(body: string) {
   const trimmed = body.trim();
   if (trimmed.length < MIN_COMMENT_LENGTH) {
@@ -344,7 +329,7 @@ function assertValidBody(body: string) {
 }
 
 function getLessonThread(lessonId: number): ThreadComment[] {
-  const course = getCourseForLesson(lessonId);
+  const course = getCourseForLesson(db, lessonId);
   if (!course) return [];
 
   const rows = db
@@ -407,7 +392,7 @@ function getLessonThread(lessonId: number): ThreadComment[] {
 function updateComment(commentId: number, userId: number, body: string) {
   const trimmed = assertValidBody(body);
 
-  const existing = getCommentById(commentId);
+  const existing = getCommentById(db, commentId);
   if (!existing) {
     throw new Error("Comment not found");
   }
@@ -427,7 +412,7 @@ function updateComment(commentId: number, userId: number, body: string) {
 }
 
 function deleteComment(commentId: number, userId: number, isStaff: boolean) {
-  const existing = getCommentById(commentId);
+  const existing = getCommentById(db, commentId);
   if (!existing) {
     throw new Error("Comment not found");
   }
@@ -903,7 +888,7 @@ export async function action({ params, request }: Route.ActionArgs) {
         }
         // Scope the id to this lesson so a comment elsewhere can't be reached
         // by posting its id to this route.
-        const existing = getCommentById(parsed.data.commentId);
+        const existing = getCommentById(db, parsed.data.commentId);
         if (!existing || existing.lessonId !== lessonId) {
           throw data("Comment not found", { status: 404 });
         }
@@ -915,7 +900,7 @@ export async function action({ params, request }: Route.ActionArgs) {
       if (!parsed.success) {
         return { ok: false, error: "Could not delete that comment." };
       }
-      const existing = getCommentById(parsed.data.commentId);
+      const existing = getCommentById(db, parsed.data.commentId);
       if (!existing || existing.lessonId !== lessonId) {
         throw data("Comment not found", { status: 404 });
       }

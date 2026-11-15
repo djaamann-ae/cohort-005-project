@@ -26,7 +26,12 @@ import {
 
 export type Db = BetterSQLite3Database<typeof schema>;
 
-function getCourseForLesson(db: Db, lessonId: number) {
+/**
+ * The course a lesson belongs to, with the lesson's own title alongside. Both
+ * surfaces that post comments need it to decide who speaks for the course, so
+ * it lives here with the posting rather than once per route.
+ */
+export function getCourseForLesson(db: Db, lessonId: number) {
   return db
     .select({
       courseId: courses.id,
@@ -42,7 +47,8 @@ function getCourseForLesson(db: Db, lessonId: number) {
     .get();
 }
 
-function getCommentById(db: Db, commentId: number) {
+/** One comment, question or reply, or undefined if there is no such row. */
+export function getCommentById(db: Db, commentId: number) {
   return db.select().from(comments).where(eq(comments.id, commentId)).get();
 }
 
@@ -86,7 +92,6 @@ function repliesAsStaff(
   return staff !== undefined;
 }
 
-/** The course a lesson belongs to, with the lesson's own title alongside. */
 type LessonContext = NonNullable<ReturnType<typeof getCourseForLesson>>;
 type Comment = typeof comments.$inferSelect;
 
