@@ -417,3 +417,84 @@ Sources: <https://docs.engagespot.co/docs/features/channels/email/sendgrid-provi
 <https://docs.engagespot.co/docs/features/channels/email/ses/>,
 <https://docs.engagespot.co/docs/features/channels/email/resend/>,
 <https://docs.engagespot.co/docs/features/channels/email/smtp-provider/>
+
+### NotificationAPI / Pingram — **docs partially unreachable**
+
+`Unreachable — 2026-11-15, in-app documentation pages 404 after a rebrand.` The vendor formerly
+documented at `docs.notificationapi.com` now 301-redirects to `www.pingram.io/docs` under the name
+**Pingram**. The docs host itself is up (`/docs` and `/llms.txt` both served fine), but every
+in-app/React path resolves to HTTP 404:
+`docs.notificationapi.com/components/inapp` → 301 → `www.pingram.io/docs/components/inapp` → 404;
+`www.pingram.io/docs/channels/inapp` (with and without trailing slash) → 404. The `/docs` hub
+enumerates Email, SMS, Inbound, Voice and server SDKs, and `/llms.txt` lists no in-app or React SDK
+page. Per the ticket's protocol this is recorded as a finding and not patched over with secondary
+sources.
+
+What **is** verifiable from primary artefacts the vendor publishes — the npm registry and the
+published bundles — and nothing beyond it:
+
+- `@notificationapi/react` v2.0.1, published **2026-10-23**, with `@notificationapi/core` v2.0.1
+  published the same day. The package README still carries NotificationAPI branding, so the rename
+  has reached the docs site but not the packages.
+- Its entry point exports `NotificationAPIProvider`, `NotificationFeed`, `NotificationPopup`,
+  `NotificationLauncher`, `NotificationCounter`, `NotificationPreferencesInline`,
+  `NotificationPreferencesPopup`, `createNotificationAPITheme`. So: a drop-in feed, a popup, a
+  launcher and an unread counter. The bundle is built on MUI (`@mui/material`, `@emotion/*`) and
+  virtualises the list (`rc-virtual-list`).
+- `@notificationapi/core` is the headless layer, dependency-free, and opens a raw
+  `new WebSocket("wss://" + websocketHost)` with `websocketHost` defaulting to
+  `ws.notificationapi.com` — a plain WebSocket, not socket.io. Its notification model carries
+  `opened`, `clicked` and `archived` fields.
+
+Sources: <https://registry.npmjs.org/@notificationapi/react>,
+<https://registry.npmjs.org/@notificationapi/core>,
+<https://unpkg.com/@notificationapi/react@2.0.1/dist/main.js>,
+<https://unpkg.com/@notificationapi/core@2.0.1/dist/main.js>, <https://www.pingram.io/docs>,
+<https://www.pingram.io/llms.txt>
+
+**Could not verify** (no reachable primary doc): whether read/unread is exposed as such versus only
+`opened`; the recipient/identity model and its upsert API; any SSR or `"use client"` guidance; which
+email providers can be connected; and whether the in-app product survives the rebrand as a
+first-class channel at all. The absence of any in-app page in the current docs and `llms.txt` is
+suggestive but is **not** evidence that the product was withdrawn — the packages were republished
+three weeks before this research date. Treat this vendor as unassessed. If #5 wants it in the running,
+it needs a hands-on check, not more reading.
+
+## Summary
+
+Rows are findings, not scores. "Client-only" below means *no server-rendered feed markup* — it does
+not mean the package breaks an SSR build.
+
+| Vendor | First-class in-app feed | React surface | SSR posture | Recipient id | Real-time transport | Email door |
+| --- | --- | --- | --- | --- | --- | --- |
+| **Knock** | Yes; seen/read/archive tracked | `@knocklabs/react`: `NotificationFeed`, `NotificationFeedPopover`, `NotificationIconButton`; hooks `useKnockFeed`, `useNotifications`, `useNotificationStore` | `"use client"` in source; `enabled` prop to keep the client idle; docs silent. Treat as client-only | `user_id` = your id; `PUT /v1/users/{user_id}` | WebSocket, "no infrastructure setup required" | Open — bring your own ESP (SES, SendGrid, Resend, Postmark, +9) |
+| **Novu Cloud** | Yes; read/seen/archived/snoozed | `@novu/react`: `<Inbox>`, `<Bell>`, `<Notifications>`, `<InboxContent>`, `<Preferences>`; hooks via `@novu/react/hooks` | Separate server build whose components are **empty stubs** "to fix build errors in SSR"; UI mounts in a shadow root. Client-only by construction | `subscriberId` = your id; `POST /v2/subscribers` or upsert on trigger | socket.io over `ws.novu.co` | Open — bring your own ESP (19 listed) |
+| **Courier** | Yes; read/opened/archived sync across devices | `@trycourier/courier-react` v9: `<CourierInbox>`, `<CourierInboxPopupMenu>`, `<CourierToast>`, `<CourierPreferences>`; `useCourier()` | Stated in docs: "support Next.js but render client-side only" | `user_id` = your id; `POST /profiles/{user_id}`; browser needs a **server-minted JWT** | WebSocket, but opt-in: must call `inbox.listenForUpdates()` | Open — "Courier isn't an email provider" (SES, SendGrid, Postmark, Resend, +10), with failover |
+| **MagicBell** | Yes; read/unread, archive, delete — the core product | `@magicbell/react`: `ContextProvider`, `Inbox`, `FloatingInbox`, `InlineNotification`, `ToastContainer`, `UserPreferences`, `WebPushButton` | `"use client"` on every module; socket constructed with `startClosed` when `window` is undefined. Docs silent | `external_id` = your id (**immutable once set**) or email; upserts; browser needs a server-minted User JWT | `reconnecting-websocket` to `wss://ws.magicbell.com` | Open, narrow list — SES, SMTP, Mailgun, SendGrid, Ping Email |
+| **SuprSend** | Yes; read/seen/archive tracked vendor-side | `@suprsend/react`: `SuprSendProvider` + `SuprSendFeedProvider` + `Inbox`; hooks `useFeedClient`, `useFeedData`, `useFeed` | No `"use client"`; isomorphic `useLayoutEffect` shim and `typeof window` guards. SSR-tolerant, not SSR-rendering. Docs silent | `distinct_id` = your id (immutable); `POST hub.suprsend.com/v1/user/{distinct_id}/`; channels as `$email`, `$sms`, … | socket.io, `socketHost` default `betainbox.suprsend.com` | Open, narrowest list — Postmark, Resend, SendGrid |
+| **Engagespot** | Yes; `unreadCount`, `markAsRead`/`markAsUnRead`/`markAsUnSeen` | `@engagespot/react-component`: single `<Engagespot />`; headless via `@engagespot/react-hooks` and core JS | Stated in docs: "We need to render EngageSpot on the client" — `'use client'` or `dynamic(..., { ssr: false })` | `identifier` = your id (must never change); `PUT api.engagespot.co/v3/users/{identifier}`; server-minted `userToken` in secure mode | socket.io pinned to `transports:["websocket"]` | Open — SendGrid, SES, Resend, MailerSend, SMTP |
+| **NotificationAPI / Pingram** | **Unassessed** — in-app docs 404 after rebrand | Package exports `NotificationAPIProvider`, `NotificationFeed`, `NotificationPopup`, `NotificationLauncher`, `NotificationCounter` (v2.0.1, 2026-10-23) | Unknown — no reachable doc | Unknown — no reachable doc | Raw `WebSocket` to `wss://ws.notificationapi.com` | Unknown — no reachable doc |
+
+### Things that are true of all of them
+
+- **None of them server-render the feed.** Every vendor's inbox is a client-side island that fetches
+  after hydration. Whatever Cadence does, the notification bell will not be in the SSR payload. This
+  is a shared constraint, not a differentiator.
+- **None of them send email themselves.** Every one is orchestration over an ESP you bring. So
+  "migrate transactional email onto the notification vendor later" means *templates, preferences and
+  logs move to the vendor; delivery still needs an SES/Resend/Postmark/SendGrid account*. No vendor
+  surveyed closes that door, and no vendor opens it fully either.
+- **All six reachable vendors key recipients on an id you supply**, so Cadence's
+  `users.id` (`integer` autoincrement primary key, `app/db/schema.ts`) maps straight through as a
+  string and no new column is needed. Four of them — Courier and MagicBell always, Engagespot in
+  secure mode, SuprSend in enhanced-security mode — additionally require a **server-minted JWT** for
+  the browser. That is a loader or resource route in Cadence, not just an env var. Knock and Novu
+  are the two that can run on a public key plus a user id alone.
+- **Identifier immutability** is called out explicitly by MagicBell ("once set for a user, it cannot
+  be changed or unset"), SuprSend and Engagespot ("must never change"). Our `users.id` is stable, so
+  this is fine — but it is a reason not to key on `users.email`, which is mutable in principle.
+
+### Deliberately not researched
+
+Pricing, free-tier quotas, credit-card-at-signup and per-recipient billing — removed from this
+ticket and owned by [#6](https://github.com/djaamann-ae/cohort-005-project/issues/6).
