@@ -484,3 +484,129 @@ Source: <https://docs.knock.app/designing-workflows/batch-function>
 Noted for completeness, not recommended: at two notifications with no fan-in, batching would mainly
 add a delay before a Student sees that staff replied. `Idempotency-Key` is the correct answer to the
 question this ticket asked.
+
+## 5. Template data — getting substance out of Cadence and into the cell
+
+ADR 0013's mitigation for copy-living-outside-git is: "pass the substance — course title, the
+Platform Admin's decision note — as template data from Cadence, so only the surrounding wording
+lives at Knock." This works, with two sharp edges worth knowing up front.
+
+### The path in: `data` → Liquid
+
+The trigger body's `data` object is addressable in the dashboard template under the `data`
+namespace. The docs are explicit: variables are inserted by enclosing them "with double curly
+braces: `{{ a_variable }}`", and "If you send through `{ "a_variable": "something" }` in your data
+payload you can reference this as `{{ data.a_variable }}`". Two further namespaces are available
+without Cadence sending anything: `recipient` (the identified user's properties — `{{ recipient.name }}`)
+and `actor` (the user passed as `actor` on the trigger). Liquid control flow and filters are
+available, e.g. `{{ actor.name | split: " " | first }}`.
+Sources: <https://docs.knock.app/designing-workflows/template-editor/overview>,
+<https://docs.knock.app/api-reference/workflows/trigger>
+
+So a Cadence trigger would look like:
+
+```jsonc
+// POST /v1/workflows/question-answered/trigger
+{
+  "recipients": ["5"],
+  "actor": "12",
+  "data": {
+    "course_title": "Rhythm Fundamentals",
+    "lesson_title": "Subdivision",
+    "link_path": "/courses/rhythm-fundamentals/lessons/subdivision"
+  }
+}
+```
+
+and the in-app template body becomes `{{ actor.name }} replied to your question on
+**{{ data.lesson_title }}**`. Only the connective words live at Knock; every proper noun comes from
+Cadence. That is the mitigation working as the ADR intends.
+
+### The path out: content blocks on the feed item
+
+An in-app template compiles to named blocks on each feed item. `@knocklabs/client` types them:
+
+```ts
+export interface ContentBlockBase { name: string; type: "markdown" | "text" | "button_set"; }
+export interface ActionButton { name: string; label: string; action: string; }
+```
+
+and `NotificationCell` looks them up by name — `blocksByName.body` (markdown, injected via
+`dangerouslySetInnerHTML` from `.rendered`), `blocksByName.action_url` (text), `blocksByName.actions`
+(button set). The dashboard side matches: in-app templates come in "three variants … Standard,
+Single-action, and Multi-action", and "the action URL is the URL that will be opened when a user
+clicks on the notification cell."
+Sources:
+<https://raw.githubusercontent.com/knocklabs/javascript/main/packages/client/src/clients/feed/interfaces.ts>,
+<https://raw.githubusercontent.com/knocklabs/javascript/main/packages/react/src/modules/feed/components/NotificationCell/NotificationCell.tsx>,
+<https://docs.knock.app/integrations/in-app/knock>
+
+### Edge 1: a resolved link path will do a full page load unless you intercept it
+
+The resolved path is the ADR's own example of substance to pass, and it is also the one that bites.
+`NotificationCell` navigates like this:
+
+```tsx
+function maybeNavigateToUrlWithDelay(url?: string) {
+  if (url && url !== "") { setTimeout(() => window.location.assign(url), 200); }
+}
+```
+
+`window.location.assign` is a document navigation — it tears down Cadence's React Router app and
+reloads it. The escape is already in the click handler:
+
+```tsx
+feedClient.markAsInteracted(item, { type: "cell_click", action: actionUrl });
+if (onItemClick) return onItemClick(item);
+return maybeNavigateToUrlWithDelay(actionUrl);
+```
+
+Passing `onNotificationClick` to `NotificationFeed` (it is forwarded to the cell as `onItemClick`)
+replaces the hard navigation while leaving `markAsInteracted` intact — so a `useNavigate()` call
+there gives client-side routing and read tracking together. `onNotificationButtonClick` does the
+same for the Multi-action variant's buttons. This means `data.link_path` can be a bare app-relative
+path like `/courses/…` rather than an absolute URL, which is also better for the mitigation: no
+hostname baked into a dashboard template.
+Source: <https://raw.githubusercontent.com/knocklabs/javascript/main/packages/react/src/modules/feed/components/NotificationCell/NotificationCell.tsx>
+
+### Edge 2: `data` must be flat if Cadence ever reads it client-side
+
+Two separate flatness constraints, from different places:
+
+- The feed's default `mode` is `"compact"`, and in compact mode "The `data` field will _not_ include
+  nested arrays and objects" and "The `actors` field will only have up to one actor". So
+  `item.data.something.nested` is simply absent unless `mode: "rich"` is set on the feed client.
+- `FeedClientOptions.trigger_data`, used to *filter* a feed, is typed
+  `[key: string]: string | number | boolean | null` with the comment: "`trigger_data` may only
+  specify flat key-value pairs, not nested objects. Specifying a nested object will result in a 422
+  `invalid_params` error."
+
+Source: <https://raw.githubusercontent.com/knocklabs/javascript/main/packages/client/src/clients/feed/interfaces.ts>
+
+Neither blocks the Liquid rendering path — the template is rendered server-side at Knock and can
+read nested `data` — but both say: keep Cadence's trigger `data` a flat bag of strings. For a course
+title, a lesson title, an actor name and a link path, that is no constraint at all.
+
+### Edge 3: the actor avatar comes from the Knock user record, not from the trigger
+
+`NotificationCell` renders `item.actors[0]` through `<Avatar name={actor.name} src={actor.avatar} />`
+— so the replying staff member's name and avatar are read from their **identified Knock user**, not
+from `data`. Getting an avatar into the cell means Cadence identifies instructors and admins into
+Knock too (`PUT /v1/users/{id}` with `name` and `avatar`), not just the Students who receive
+notifications. If that is unwanted, pass the name through `data` and render it in the body instead,
+and the cell simply shows no avatar.
+Source: <https://raw.githubusercontent.com/knocklabs/javascript/main/packages/react/src/modules/feed/components/NotificationCell/NotificationCell.tsx>
+
+### Assessment of the ADR's mitigation
+
+It holds, and it is better than the ADR claims — with the actor name on the Knock user record and
+course/lesson titles plus a link path in `data`, the only thing living in the dashboard is a
+sentence frame per workflow (two of them). Two residual risks the ADR does not mention:
+
+1. **A typo'd variable fails silently.** Liquid renders an unknown `{{ data.corse_title }}` as empty
+   string. Nothing in `npm run test` or `npm run typecheck` can see it; the first signal is a
+   Student reading "replied to your question on **.**". The trigger payload is the only part of
+   this that is testable in Cadence's own suite.
+2. **The template and the trigger are versioned separately.** Renaming a `data` key in Cadence is a
+   breaking change to a document that lives at Knock, is not in this repo's git history, and does
+   not go through review. Keeping the key set small and boring is the mitigation for the mitigation.
