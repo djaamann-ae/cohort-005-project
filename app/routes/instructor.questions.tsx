@@ -13,7 +13,13 @@ import { UserAvatar } from "~/components/user-avatar";
 import { AlertTriangle, CheckCircle2, ExternalLink } from "lucide-react";
 import { cn, daysSince, formatRelativeTime } from "~/lib/utils";
 import { MAX_COMMENT_LENGTH } from "~/lib/comments";
-import { answersForTheCourse, createComment } from "~/lib/comments.server";
+import {
+  answersForTheCourse,
+  createComment,
+  getCommentById,
+  getCourseForLesson,
+  type CreateCommentResult,
+} from "~/lib/comments.server";
 import { sendNotification } from "~/lib/notifications.server";
 import { parseFormData } from "~/lib/validation";
 import { db } from "~/db";
@@ -102,25 +108,6 @@ function getUnansweredQuestions(instructorId: number | null): QueuedQuestion[] {
     .all();
 }
 
-function getCommentById(commentId: number) {
-  return db.select().from(comments).where(eq(comments.id, commentId)).get();
-}
-
-function getCourseForLesson(lessonId: number) {
-  return db
-    .select({
-      courseId: courses.id,
-      courseTitle: courses.title,
-      courseSlug: courses.slug,
-      instructorId: courses.instructorId,
-    })
-    .from(lessons)
-    .innerJoin(modules, eq(lessons.moduleId, modules.id))
-    .innerJoin(courses, eq(modules.courseId, courses.id))
-    .where(eq(lessons.id, lessonId))
-    .get();
-}
-
 // A question sitting this long without an answer gets called out visually.
 const STALE_AFTER_DAYS = 3;
 
@@ -158,12 +145,12 @@ export async function action({ request }: Route.ActionArgs) {
     return { ok: false, error: "Enter a reply before posting." };
   }
 
-  const question = getCommentById(parsed.data.commentId);
+  const question = getCommentById(db, parsed.data.commentId);
   if (!question) {
     throw data("Question not found", { status: 404 });
   }
 
-  const course = getCourseForLesson(question.lessonId);
+  const course = getCourseForLesson(db, question.lessonId);
   if (!course) {
     throw data("Course not found", { status: 404 });
   }
@@ -178,21 +165,23 @@ export async function action({ request }: Route.ActionArgs) {
     throw data("Select a user from the DevUI panel to reply.", { status: 401 });
   }
 
-  let notification;
+  let reply: CreateCommentResult;
   try {
-    notification = createComment(
+    reply = createComment(
       db,
       access.userId,
       question.lessonId,
       question.id,
       parsed.data.body
-    ).notification;
+    );
   } catch (error) {
     if (error instanceof Error) {
       return { ok: false, error: error.message };
     }
     throw error;
   }
+
+  const { notification } = reply;
 
   // The reply has already committed, so a Knock outage costs the Student
   // nothing but the Notification: sendNotification swallows and logs.

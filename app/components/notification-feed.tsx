@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
+import { toast } from "sonner";
 import { Bell } from "lucide-react";
 import type { FeedItem } from "@knocklabs/client";
 import {
@@ -61,6 +62,34 @@ export function notificationPath(item: NotificationLike): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Where a click on this Notification lands, and why that is not where the
+ * Notification pointed.
+ *
+ * A Notification outlives the thing it is about, and an old one can carry no
+ * usable link at all. Doing nothing in that case leaves the Student clicking a
+ * row that never moves — the dead end itself. The Feed is the honest fallback:
+ * it is the record the Notification belongs to, and the reason says why they
+ * are looking at it instead of an answer.
+ */
+export type NotificationTarget = {
+  path: string;
+  /** Null when the Notification took them where it pointed. */
+  reason: string | null;
+};
+
+export function notificationTarget(item: NotificationLike): NotificationTarget {
+  const path = notificationPath(item);
+
+  if (path !== null) return { path, reason: null };
+
+  return {
+    path: NOTIFICATIONS_PATH,
+    reason:
+      "That notification doesn’t point anywhere we can open any more. Here’s your full feed instead.",
+  };
 }
 
 /** Who the Notification is from, if anyone. */
@@ -219,6 +248,9 @@ export function NotificationProviders({
  * Clicking a Notification goes through the router rather than Knock's own full
  * page assign. Knock's cell marks the Notification read before it calls this,
  * so the navigation runs after the read-tracking rather than instead of it.
+ *
+ * Every click goes somewhere. One that cannot reach what it was about says so
+ * and lands on the Feed, because a row that swallows the click is the dead end.
  */
 export function useNotificationFeedProps({
   onNavigate,
@@ -232,11 +264,11 @@ export function useNotificationFeedProps({
     (item: FeedItem) => {
       onNavigate?.();
 
-      const path = notificationPath(item);
+      const { path, reason } = notificationTarget(item);
 
-      if (path) {
-        navigate(path);
-      }
+      if (reason) toast.info(reason);
+
+      navigate(path);
     },
     [navigate, onNavigate]
   );

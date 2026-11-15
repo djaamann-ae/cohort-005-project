@@ -21,7 +21,7 @@ const thread = {
 describe("a lesson a Student can no longer reach", () => {
   it("says the Enrollment ended rather than leaving the thread silently missing", () => {
     const html = render(
-      <LessonDiscussion {...thread} canViewContent={false} lapsed />
+      <LessonDiscussion {...thread} canViewContent={false} enrollmentEnded />
     );
 
     expect(html).toContain("Your Enrollment on this course has ended");
@@ -30,28 +30,26 @@ describe("a lesson a Student can no longer reach", () => {
 
   it("offers the course and the catalogue rather than a dead end", () => {
     const html = render(
-      <LessonDiscussion {...thread} canViewContent={false} lapsed />
+      <LessonDiscussion {...thread} canViewContent={false} enrollmentEnded />
     );
 
     expect(html).toContain('href="/courses/advanced-typescript"');
     expect(html).toContain('href="/courses"');
   });
 
-  it("does not claim an Enrollment ended for a visitor who never had one", () => {
+  it("says nothing at all to a visitor who was never enrolled", () => {
     const html = render(
-      <LessonDiscussion {...thread} canViewContent={false} lapsed={false} />
+      <LessonDiscussion {...thread} canViewContent={false} enrollmentEnded={false} />
     );
 
-    expect(html).not.toContain("has ended");
-    expect(html).toContain("enrolled students");
-    expect(html).toContain('href="/courses/advanced-typescript"');
+    expect(html).toBe("");
   });
 });
 
 describe("a lesson a Student can still reach", () => {
   it("shows the thread, with nothing said about access", () => {
     const html = render(
-      <LessonDiscussion {...thread} canViewContent lapsed={false} />
+      <LessonDiscussion {...thread} canViewContent enrollmentEnded={false} />
     );
 
     expect(html).toContain("Questions &amp; Discussion");

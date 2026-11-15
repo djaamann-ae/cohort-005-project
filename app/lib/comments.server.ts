@@ -11,7 +11,10 @@ import {
   UserRole,
 } from "~/db/schema";
 import { MIN_COMMENT_LENGTH, MAX_COMMENT_LENGTH } from "~/lib/comments";
-import type { StaffRepliedNotification } from "~/lib/notifications.server";
+import {
+  buildNotification,
+  type StaffRepliedNotification,
+} from "~/lib/notifications.server";
 
 // ─── Comments ───
 // Writing a comment on a lesson: a question, or a reply to one. Both the
@@ -23,7 +26,12 @@ import type { StaffRepliedNotification } from "~/lib/notifications.server";
 
 export type Db = BetterSQLite3Database<typeof schema>;
 
-function getCourseForLesson(db: Db, lessonId: number) {
+/**
+ * The course a lesson belongs to, with the lesson's own title alongside. Both
+ * surfaces that post comments need it to decide who speaks for the course, so
+ * it lives here with the posting rather than once per route.
+ */
+export function getCourseForLesson(db: Db, lessonId: number) {
   return db
     .select({
       courseId: courses.id,
@@ -39,7 +47,8 @@ function getCourseForLesson(db: Db, lessonId: number) {
     .get();
 }
 
-function getCommentById(db: Db, commentId: number) {
+/** One comment, question or reply, or undefined if there is no such row. */
+export function getCommentById(db: Db, commentId: number) {
   return db.select().from(comments).where(eq(comments.id, commentId)).get();
 }
 
@@ -83,7 +92,6 @@ function repliesAsStaff(
   return staff !== undefined;
 }
 
-/** The course a lesson belongs to, with the lesson's own title alongside. */
 type LessonContext = NonNullable<ReturnType<typeof getCourseForLesson>>;
 type Comment = typeof comments.$inferSelect;
 
@@ -170,21 +178,16 @@ function buildStaffReplyNotification(
   const asker = getUserById(db, question.userId);
   const actor = getUserById(db, reply.userId);
 
-  return {
+  return buildNotification({
     workflow: "staff-replied-to-question",
-    recipient: {
-      id: String(question.userId),
-      name: asker?.name ?? "there",
-    },
-    // Derived from the reply itself, so a double-submitted reply produces one
-    // Notification.
-    idempotencyKey: `comment-reply:${reply.id}`,
+    recipient: { id: question.userId, name: asker?.name },
+    // Keyed on the reply, so a double-submitted one produces one Notification.
+    event: { name: "comment-reply", id: reply.id },
+    path: `/courses/${course.courseSlug}/lessons/${reply.lessonId}`,
     data: {
       actorName: actor?.name ?? "Cadence",
       courseTitle: course.courseTitle,
       lessonTitle: course.lessonTitle,
-      // A leading slash: Knock joins it onto its own app_url.
-      actionUrl: `/courses/${course.courseSlug}/lessons/${reply.lessonId}`,
     },
-  };
+  });
 }

@@ -36,6 +36,20 @@ describe("the notification bell in the sidebar", () => {
     expect(html).toContain("Notifications");
   });
 
+  it.each([
+    ["an Instructor", UserRole.Instructor],
+    ["a Platform Admin", UserRole.Admin],
+  ])("is absent for %s, who works from their own queue", (_who, role) => {
+    const html = render(
+      <Sidebar
+        currentUser={{ ...student, role }}
+        knock={{ publicApiKey: "pk_test_123", feedChannelId: "feed-1" }}
+      />
+    );
+
+    expect(html).not.toContain("Notifications");
+  });
+
   it("carries no count until the Student has something unread", () => {
     const html = render(
       <Sidebar
