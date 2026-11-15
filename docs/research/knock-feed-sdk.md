@@ -161,3 +161,176 @@ Mapped onto Cadence, with the differences that matter:
 - **`currentUser` can be `null`** in Cadence (the DevUI "no user selected" state). Fold that into the
   same flag: `enabled={hydrated && Boolean(userId)}`, which is literally the shape in the prop's
   example.
+
+## 2. `NotificationFeedPopover` against a sidebar — and the "ordinary DOM" claim
+
+### Verdict on ADR 0013's load-bearing claim: it holds
+
+ADR 0013 (`docs/adr/0013-knock-handles-in-app-notifications.md`) rejects Novu partly because "its
+Inbox mounts in a shadow root … Knock's components are ordinary DOM." Checked against the published
+source:
+
+- A full-text search of `packages/react/src`, `packages/react-core/src` and `packages/client/src`
+  for `attachShadow`, `shadowRoot`, `ShadowRoot` and `<iframe` returns **no matches**.
+- There is no `createPortal` call anywhere in `packages/react/src` or `packages/react-core/src` —
+  the popover renders inline, in place in the tree.
+- Every feed component returns plain elements with plain `className` strings. Verbatim, the whole
+  of `NotificationFeedContainer`:
+
+  ```tsx
+  export const NotificationFeedContainer: FunctionComponent<{ children?: ReactNode | undefined }> =
+    ({ children }) => <div className="rnf-feed-provider">{children}</div>;
+  ```
+
+  and the popover's own return:
+
+  ```tsx
+  <div className={`rnf-notification-feed-popover rnf-notification-feed-popover--${colorMode}`} … >
+    <div className="rnf-notification-feed-popover__inner">
+      <NotificationFeed {...feedProps} />
+    </div>
+  </div>
+  ```
+
+- Styles arrive as an ordinary stylesheet the app imports itself — `@knocklabs/react/dist/index.css`,
+  declared in `package.json` as `"style": "dist/index.css"` with an explicit
+  `"./dist/index.css"` export. Nothing is injected into an encapsulated root.
+
+**So the claim stands, and the ADR does not need amending.** This is the opposite of the Novu
+finding in the survey, and it is the difference the ADR says it is.
+
+Sources:
+<https://raw.githubusercontent.com/knocklabs/javascript/main/packages/react/src/modules/feed/components/NotificationFeedContainer/NotificationFeedContainer.tsx>,
+<https://raw.githubusercontent.com/knocklabs/javascript/main/packages/react/src/modules/feed/components/NotificationFeedPopover/NotificationFeedPopover.tsx>,
+<https://raw.githubusercontent.com/knocklabs/javascript/main/packages/react/package.json>
+
+### How much of the markup Cadence's Tailwind can actually reach
+
+"Ordinary DOM" is necessary but not sufficient. What Cadence gets, in descending order of ease:
+
+1. **CSS custom properties.** Each component's stylesheet declares its own knobs on `:root` and then
+   consumes them. The popover's full set:
+
+   ```css
+   :root {
+     --rnf-notification-feed-popover-max-w: 400px;
+     --rnf-notification-feed-popover-min-w: 280px;
+     --rnf-notification-feed-popover-height: 400px;
+     --rnf-notification-feed-popover-shadow: drop-shadow(0px 5px 15px rgba(0, 0, 0, 0.2));
+     --rnf-notification-feed-popover-shadow-color: rgba(0, 0, 0, 0.2);
+     --rnf-notification-feed-popover-bg-color: #fff;
+     --rnf-notification-feed-popover-z-index: 999;
+     --rnf-notification-feed-popover-arrow-size: 10px;
+     --rnf-notification-feed-popover-border-radius: 4px;
+   }
+   ```
+
+   Because they are plain custom properties on `:root`, Cadence can redefine them in `app/app.css`
+   from its own shadcn tokens — e.g. `--rnf-notification-feed-popover-bg-color: var(--popover)` —
+   and they cascade. The docs confirm this is the intended seam: "CSS variables (prefixed with
+   `--rnf-`) for theme adjustments. All component classes start with `rnf-`."
+   Sources: <https://docs.knock.app/in-app-ui/react/feed>,
+   <https://raw.githubusercontent.com/knocklabs/javascript/main/packages/react/src/modules/feed/components/NotificationFeedPopover/styles.css>
+
+2. **Class selectors, reachable but not via utility classes.** The components take no `className`
+   prop, so Cadence cannot hang Tailwind utilities on them. It can write ordinary rules against the
+   stable `rnf-` names in `app/app.css`. The names rendered by the feed path are:
+   `rnf-feed-provider`, `rnf-notification-icon-button--{light,dark}`, `rnf-unseen-badge`,
+   `rnf-unseen-badge__count`, `rnf-notification-feed-popover--{mode}`,
+   `rnf-notification-feed-popover__inner`, `rnf-notification-feed--{mode}`,
+   `rnf-notification-feed__header`, `rnf-notification-feed__selector`,
+   `rnf-notification-feed__container`, `rnf-notification-feed__feed-items-container`,
+   `rnf-notification-feed__spinner-container`, `rnf-notification-feed__knock-branding`,
+   `rnf-notification-cell--{mode}`, `rnf-notification-cell__inner`,
+   `rnf-notification-cell__unread-dot`, `rnf-notification-cell__content-outer`,
+   `rnf-notification-cell__content`, `rnf-notification-cell__button-group`,
+   `rnf-notification-cell__child-content`, `rnf-notification-cell__timestamp`,
+   `rnf-archive-notification-btn`, `rnf-tooltip`, `rnf-avatar`, `rnf-avatar__image`,
+   `rnf-avatar__initials`, `rnf-empty-feed__{inner,header,body}`.
+   Sources: the component files under
+   <https://github.com/knocklabs/javascript/tree/main/packages/react/src/modules/feed/components>
+
+3. **Not reachable by class at all: the notification body.** `NotificationCell` renders the Knock
+   template's rendered markdown with `dangerouslySetInnerHTML`:
+
+   ```tsx
+   <div className="rnf-notification-cell__content"
+        dangerouslySetInnerHTML={{ __html: (blocksByName.body as MarkdownContentBlock).rendered }} />
+   ```
+
+   That HTML comes from the dashboard template and carries no classes, so Tailwind utilities cannot
+   be applied to it. Cadence would style it with descendant rules
+   (`.rnf-notification-cell__content a { … }`) — and note Tailwind v4's preflight will already have
+   reset those bare `<p>`/`<a>`/`<strong>` elements, so some restyling is not optional. (Cadence
+   has `@tailwindcss/typography` available, but `prose` cannot be applied without a `className`
+   hook — it would have to be `@apply`-ed onto the `rnf-` selector.)
+   Source: <https://raw.githubusercontent.com/knocklabs/javascript/main/packages/react/src/modules/feed/components/NotificationCell/NotificationCell.tsx>
+
+4. **The real escape hatch is `renderItem`, not CSS.** `NotificationFeedProps` exposes
+   `renderItem?: (props: { item, onItemClick, onButtonClick, formatTimestamp }) => ReactNode`,
+   defaulting to `<NotificationCell … />`, plus `renderHeader`, `renderLoading`, `EmptyComponent`
+   and `formatTimestamp`. Replacing `renderItem` with a Cadence component gets full Tailwind inside
+   the list while keeping Knock's provider, store, socket and read-state plumbing. Given Cadence has
+   two notification shapes, this is cheap. Note the cost: the default `NotificationCell` is what
+   calls `markAsInteracted` on click (see §6), so a custom `renderItem` must call it too.
+   Source: <https://raw.githubusercontent.com/knocklabs/javascript/main/packages/react/src/modules/feed/components/NotificationFeed/NotificationFeed.tsx>
+
+5. **Dark mode must be wired by hand.** Knock's components branch on a `colorMode` prop passed to
+   `KnockFeedProvider` (`colorMode = "light"` default), emitting `--light`/`--dark` class suffixes.
+   Cadence's dark mode is a `.dark` class on `<html>` with Tailwind v4's
+   `@custom-variant dark (&:is(.dark *))` and a `localStorage` flag toggled in `Sidebar`. These are
+   two independent switches; the bell island has to feed Cadence's `isDark` into `colorMode`, or the
+   feed will be light-on-dark.
+   Sources: <https://raw.githubusercontent.com/knocklabs/javascript/main/packages/react-core/src/modules/feed/context/KnockFeedProvider.tsx>,
+   `app/app.css`, `app/components/sidebar.tsx`
+
+### Anchoring it to a sidebar item
+
+Yes — the popover is not hard-wired to a header bell. It positions itself with Popper against
+whatever element `buttonRef` points at, and takes a `placement`:
+
+```tsx
+export interface NotificationFeedPopoverProps extends NotificationFeedProps {
+  isVisible: boolean;
+  onOpen?: (arg: OnOpenOptions) => void;
+  onClose: (e: Event) => void;
+  buttonRef: RefObject<HTMLElement | null>;
+  closeOnClickOutside?: boolean;
+  placement?: Placement;
+}
+```
+
+```tsx
+const popperInstance = createPopper(buttonRef.current, popperRef.current, {
+  strategy: "fixed",
+  placement,
+  modifiers: [{ name: "offset", options: { offset: [0, 8] } }],
+});
+```
+
+Four things follow, all of which favour a sidebar:
+
+- `buttonRef` is typed `RefObject<HTMLElement | null>`, not a button — any element in
+  `app/components/sidebar.tsx` can be the anchor.
+- `placement` is Popper's `Placement` union, so `"right-start"` / `"right-end"` are available and
+  are the natural choices for a left rail. The default is `"bottom-end"`, which is the header-bell
+  assumption and should be overridden. Allowed values are `auto | auto-start | auto-end | top |
+  bottom | right | left | {top,bottom,right,left}-{start,end}`.
+  Source: <https://unpkg.com/@popperjs/core@2.11.8/lib/enums.d.ts> (`@popperjs/core` ^2.11.8 is the
+  declared dependency in `packages/react/package.json`)
+- `strategy: "fixed"` means the popover is positioned against the viewport, so it escapes the
+  `<aside>`'s 14rem width and any ancestor clipping — exactly the problem a 400px-wide panel would
+  otherwise have in a `w-56` rail. `layout.app.tsx`'s outer `div` is `overflow-hidden`, which would
+  clip an absolutely-positioned popover; `fixed` sidesteps it.
+- It stays mounted when closed (`visibility: hidden; opacity: 0`), so its DOM is always present. It
+  is **not** portalled, so it lives inside the `<aside>` subtree. Before Popper's first write it is
+  a static `div` with `width: 100%` and `height: 400px`, which could perturb the sidebar's flex
+  layout for a frame; giving it a wrapper with `position: relative` / zero size, or mounting the
+  island outside the nav flow, avoids that. Its `z-index` is `999` via
+  `--rnf-notification-feed-popover-z-index`; Cadence's `Toaster` (sonner) and `DevUI` are the other
+  floating layers to check against.
+
+One cosmetic gap worth knowing: `styles.css` defines `.rnf-notification-feed-popover__arrow`, but
+`NotificationFeedPopover.tsx` never renders an arrow element. There is no caret pointing back at the
+anchor, from any placement.
+Source: <https://raw.githubusercontent.com/knocklabs/javascript/main/packages/react/src/modules/feed/components/NotificationFeedPopover/NotificationFeedPopover.tsx>
