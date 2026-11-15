@@ -274,3 +274,81 @@ Sources: <https://www.magicbell.com/docs/channels/in_app>,
 on the email channel is offered by the following providers: Amazon SES, SMTP, Mailgun, SendGrid,
 Ping Email." Again orchestration, not delivery — a separate ESP account is still required.
 Source: <https://www.magicbell.com/docs/channels/email>
+
+### SuprSend
+
+Docs reachable 2026-11-15. (Note: the paths `/docs/inbox` and `/docs/subscriber` return 404 — the
+live paths are `/docs/inbox-overview` and `/docs/users`. The host itself was never down.)
+
+**In-app feed.** Yes — the **Inbox**, "an in-app notification feed", with state owned by the vendor:
+"no infrastructure required at your end to manage and store inbox notifications, and for state
+management such as read, seen, and archive tracking".
+Source: <https://docs.suprsend.com/docs/inbox-overview>
+
+**React components.** Package `@suprsend/react` (v1.5.0 at time of reading; the older
+`@suprsend/react-inbox` is deprecated), layered over `@suprsend/react-core` (v2.4.0) and
+`@suprsend/web-sdk` (v5.4.0). Setup is two nested providers plus a component:
+
+```jsx
+<SuprSendProvider publicApiKey={YOUR_KEY} distinctId={YOUR_DISTINCT_ID}>
+  <SuprSendFeedProvider>Your Feed Component</SuprSendFeedProvider>
+</SuprSendProvider>
+```
+
+Drop-in `Inbox` (a popover feed) with props including `pageSize`, `tenantId`, `stores`, `host`,
+`theme`, `themeType`, `notificationClickHandler`. Headless hooks are documented and exported:
+`useFeedClient` (feed instance — mark seen/read/archive), `useFeedData` (notification list and meta
+as React state), `useFeed` (reachability status), plus `useTranslations`.
+Sources: <https://docs.suprsend.com/docs/react-inbox-integration>,
+<https://docs.suprsend.com/docs/react-in-app-feed>,
+<https://docs.suprsend.com/docs/react-sdk-headless-feed>,
+<https://unpkg.com/@suprsend/react/package.json>,
+<https://unpkg.com/@suprsend/react@1.5.0/dist/es/index.js>
+
+**SSR.** Docs say nothing about SSR or `"use client"`. The published bundles say something more
+interesting than Knock/MagicBell: `@suprsend/react@1.5.0`'s ESM entry does **not** carry a
+`"use client"` directive, and neither does `@suprsend/react-core@2.4.0`. What `react-core` does
+carry is the standard isomorphic layout-effect shim — it picks `useLayoutEffect` or `useEffect` with
+`typeof window < "u" ? W : N` — and `@suprsend/web-sdk@5.4.0` likewise guards on
+`typeof window < "u"`. Reading: the SDK is written to survive being imported and rendered in a
+Node/SSR pass rather than to be excluded from it, but there is no published statement of SSR support
+and no server-rendered feed markup. For Cadence the safe posture is still a client-only island; the
+absence of `"use client"` means a bundler-level directive is ours to add if we need one.
+Sources (published packages, read 2026-11-15):
+<https://unpkg.com/@suprsend/react@1.5.0/dist/es/index.js>,
+<https://unpkg.com/@suprsend/react-core/dist/es/index.js>,
+<https://unpkg.com/@suprsend/web-sdk/dist/es/index.js>
+
+**Recipient/identity model.** "Each user is identified by a unique `distinct_id`, and their profile
+stores everything SuprSend needs to reach them." The `distinct_id` is immutable once created and is
+meant to be a stable value from your system, such as a database primary key. Upsert via
+`POST https://hub.suprsend.com/v1/user/{distinct_id}/` with Bearer auth; semantics are patch-like —
+"Keys you send are updated; keys you omit stay as they were." Channel identities are stored as
+arrays under reserved `$`-prefixed keys: `$email`, `$sms`, `$androidpush`, `$iospush`, `$webpush`,
+`$whatsapp`, `$slack`, and "a user can have multiple addresses per channel; SuprSend attempts each
+until one succeeds." Users can also be created inline from a trigger payload or from the client SDK.
+Mapping for Cadence: `users.id` → `distinct_id`; email goes in as `$email` rather than a plain
+`email` field. Browser side takes `publicApiKey` + `distinctId`, with an optional signed `userToken`
+(JWT) for the enhanced-security mode — the docs note SuprSend moved from HMAC `subscriber_id` to
+signed JWT user tokens.
+Sources: <https://docs.suprsend.com/docs/users>,
+<https://docs.suprsend.com/docs/react-inbox-integration>,
+<https://docs.suprsend.com/docs/react-sdk-headless-feed>
+
+**Real-time.** Yes, WebSocket via socket.io. The feed docs talk about "the feed socket" being live
+and expose a `host` config taking `socketHost` and `apiHost`. The SDK confirms the technology:
+`@suprsend/web-sdk` depends on `socket.io-client ^4.8.1`, imports `io` from it, handles
+`reconnect_attempt`, and defaults `socketHost` to `https://betainbox.suprsend.com` (API host
+defaults to `https://hub.suprsend.com`).
+Sources: <https://docs.suprsend.com/docs/react-in-app-feed>,
+<https://unpkg.com/@suprsend/web-sdk/package.json>,
+<https://unpkg.com/@suprsend/web-sdk/dist/es/index.js>
+
+**Email door.** Open, and the narrowest vendor list of the reachable set: Postmark, Resend and
+SendGrid. SuprSend does not deliver mail itself — From Name / From Email left blank are "picked from
+your vendor settings", and the domain must be verified with the chosen vendor.
+Source: <https://docs.suprsend.com/docs/email>
+
+**Could not verify.** Whether `socketHost` defaulting to a host named `betainbox.suprsend.com` says
+anything about the feed's maturity — that is an inference from a hostname, not a documented fact,
+and should not be treated as one.
