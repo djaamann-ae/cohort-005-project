@@ -745,7 +745,9 @@ loading state could not distinguish "nothing yet" from "nothing".
 Sources:
 <https://raw.githubusercontent.com/knocklabs/javascript/main/packages/client/src/clients/feed/store.ts>,
 <https://raw.githubusercontent.com/knocklabs/javascript/main/packages/react/src/modules/feed/components/UnseenBadge/UnseenBadge.tsx>,
-<https://raw.githubusercontent.com/knocklabs/javascript/main/packages/react/src/modules/feed/components/NotificationIconButton/NotificationIconButton.tsx>
+<https://raw.githubusercontent.com/knocklabs/javascript/main/packages/react/src/modules/feed/components/NotificationIconButton/NotificationIconButton.tsx>,
+<https://raw.githubusercontent.com/knocklabs/javascript/main/packages/react/src/modules/feed/components/UnseenBadge/styles.css>
+(`.rnf-unseen-badge` is `position: absolute; top: 0; right: 0`, 16px square)
 
 ### The inferred answer, by mount strategy
 
