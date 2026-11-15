@@ -706,3 +706,97 @@ oddly: a Student opens the panel, the badge clears, but every item still shows a
 
 Either is a one-prop change; both are supported by documented props. This is a design input for
 [#8](https://github.com/djaamann-ae/cohort-005-project/issues/8), not something the SDK forces.
+
+## 7. DEFERRED — what the pre-hydration gap looks like in practice
+
+**This question is deferred by the ticket and is NOT verified. Nothing below has been observed in a
+browser.** It is an inference from the published source, recorded so
+[#8](https://github.com/djaamann-ae/cohort-005-project/issues/8) has something to work from, and it
+must be confirmed by whoever first runs the component (see
+[#6](https://github.com/djaamann-ae/cohort-005-project/issues/6)).
+
+### What the source implies
+
+The feed store starts at zero, not at "unknown":
+
+```ts
+export const initialStoreState: FeedStoreState = {
+  items: [],
+  metadata: { total_count: 0, unread_count: 0, unseen_count: 0 },
+  pageInfo: { before: null, after: null, page_size: 50 },
+  loading: false,
+  networkStatus: NetworkStatus.ready,
+  …
+};
+```
+
+and `UnseenBadge` renders **nothing at all** at zero — not a `0`, not a placeholder:
+
+```tsx
+return badgeCountValue !== 0 ? ( <div className="rnf-unseen-badge" …> ) : null;
+```
+
+`NotificationIconButton` does not depend on store state, so the `<button>` + `BellIcon` render
+regardless. Neither component has a loading or skeleton branch; the only spinner in the feed path is
+`renderLoading` inside `NotificationFeed`, i.e. inside the popover, which a Student has not opened
+yet. And `networkStatus` starts at `ready`, not `loading`, so even a component that wanted to show a
+loading state could not distinguish "nothing yet" from "nothing".
+
+Sources:
+<https://raw.githubusercontent.com/knocklabs/javascript/main/packages/client/src/clients/feed/store.ts>,
+<https://raw.githubusercontent.com/knocklabs/javascript/main/packages/react/src/modules/feed/components/UnseenBadge/UnseenBadge.tsx>,
+<https://raw.githubusercontent.com/knocklabs/javascript/main/packages/react/src/modules/feed/components/NotificationIconButton/NotificationIconButton.tsx>
+
+### The inferred answer, by mount strategy
+
+- **With `enabled={hydrated}` and the island rendered on the server** (§1's recommendation): the SSR
+  payload contains **a bare bell with no badge**. Not a zero, not a skeleton. After hydration the
+  effect fires, the fetch returns, and the badge **pops in** with no transition. The bell's own box
+  never changes size, so the shift should be confined to the badge itself — `UnseenBadge` is
+  absolutely positioned over the button in `styles.css`, which would make it a pure appear rather
+  than a reflow. *(Unverified.)*
+- **With conditional mounting** (`{hydrated && <KnockProvider …>}`): the SSR payload contains
+  **nothing**, and the whole bell appears on hydration. In a vertical sidebar that is a layout shift
+  of the items below it, which is worse than a badge appearing. This is an argument for `enabled`
+  over conditional mounting beyond the vendor's own preference.
+
+### The window
+
+The gap is one React commit plus one HTTP round trip to `api.knock.app` — the fetch only starts in
+`NotificationFeed`'s effect after hydration, and nothing is prefetched during SSR. On a slow
+connection a Student could plausibly see an un-badged bell for several hundred milliseconds on every
+page load. ADR 0013 already accepts this ("The notification bell is absent from the SSR payload on
+every page load"), and the survey recorded it as true of every vendor looked at.
+
+### What to check when an account is available
+
+1. Does the bare bell render in the SSR HTML (view source, JS disabled), or does React blank it?
+2. Does the badge appearing shift anything in `app/components/sidebar.tsx`?
+3. How long is the gap on a throttled connection — is a deliberate placeholder worth designing?
+4. Does React log a hydration mismatch when `enabled` flips (the server rendered a signed-out tree,
+   the client an authenticated one)? §1's reading of `feedProviderKey` says the remount should be
+   clean, but that is an inference too.
+
+## Unreachable sources
+
+- `https://docs.knock.app/in-app-ui/react/notification-feed` — HTTP 404, 2026-11-15. The correct
+  path is `/in-app-ui/react/feed`, which was reachable and is cited above.
+- `https://docs.knock.app/in-app-ui/react/styling` — HTTP 404, 2026-11-15. No such page; styling is
+  covered inside `/in-app-ui/react/feed`, which was used instead.
+- `https://popper.js.org/docs/v2/constructors/` — HTTP 404, 2026-11-15. The `Placement` union was
+  taken from the published type declaration of the exact declared dependency instead
+  (`https://unpkg.com/@popperjs/core@2.11.8/lib/enums.d.ts`).
+- `https://docs.knock.app/in-app-ui/react/sdk/reference` — reachable, but the page served no props
+  tables to a plain fetch (it appears to render them client-side). Every prop quoted in this file
+  was read from the published TypeScript source instead, which is the stronger source anyway.
+
+## Gaps this research did not close
+
+- **Pricing, quotas and commercial terms.** Out of scope here and in the survey; ADR 0013 notes they
+  are "not discoverable from public pages" and that Novu is the fallback if they turn out
+  unworkable.
+- **Whether the in-app feed channel id is per-environment.** The setup sample reads it from an env
+  var, which implies yes, but nothing read here states it.
+- **The exact rendered HTML of a markdown body block.** `NotificationCell` injects
+  `MarkdownContentBlock.rendered` verbatim; what tags Knock emits was not observable without a live
+  account, and it determines how much CSS §2.3 actually needs.
