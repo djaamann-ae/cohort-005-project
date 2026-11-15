@@ -6,7 +6,7 @@ import { getCurrentUserId } from "~/lib/session";
 import { getAccess, requireContentAccess } from "~/lib/access.server";
 import { renderComment } from "~/lib/comment-markdown.server";
 import {
-  CommentThread,
+  LessonDiscussion,
   type RenderedComment,
 } from "~/components/comment-thread";
 import { MIN_COMMENT_LENGTH, MAX_COMMENT_LENGTH } from "~/lib/comments";
@@ -734,6 +734,14 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   const { pppBlocked, pppBlockedCountry, pppPurchaseCountry, canViewContent } =
     access;
 
+  // A Notification outlives the Enrollment it was about, so clicking an old one
+  // can land a Lapsed Student on a lesson whose thread they can no longer read.
+  // Lapsed, per the glossary: lost their Enrollment, still has progress on it.
+  const lapsed =
+    currentUserId !== null &&
+    !canViewContent &&
+    getLessonProgressForCourse(currentUserId, course.id).length > 0;
+
   // Comments are confidential to the course: only people who can read the
   // lesson can read the discussion on it.
   const instructor = getUserById(course.instructorId);
@@ -833,6 +841,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     pppPurchaseCountry,
     comments,
     canViewContent,
+    lapsed,
     canModerate: access.isStaff,
     instructorName: instructor?.name ?? "your instructor",
   };
@@ -1004,6 +1013,7 @@ export default function LessonViewer({ loaderData }: Route.ComponentProps) {
     pppPurchaseCountry,
     comments,
     canViewContent,
+    lapsed,
     canModerate,
     instructorName,
   } = loaderData;
@@ -1216,16 +1226,17 @@ export default function LessonViewer({ loaderData }: Route.ComponentProps) {
             </div>
           )}
 
-          {/* Questions & Discussion — confidential to people with access */}
-          {canViewContent && (
-            <CommentThread
-              comments={comments}
-              currentUserId={currentUserId}
-              canModerate={canModerate}
-              canPost
-              instructorName={instructorName}
-            />
-          )}
+          {/* Questions & Discussion — confidential to people with access, and
+              a plain reason in its place for anyone else */}
+          <LessonDiscussion
+            canViewContent={canViewContent}
+            lapsed={lapsed}
+            courseSlug={course.slug}
+            comments={comments}
+            currentUserId={currentUserId}
+            canModerate={canModerate}
+            instructorName={instructorName}
+          />
 
           {/* Prev/Next Navigation */}
           <div className="flex items-center justify-between border-t pt-6">
