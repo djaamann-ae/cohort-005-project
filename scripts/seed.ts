@@ -72,6 +72,8 @@ async function seed() {
 
   // Drop and recreate tables for a clean seed
   sqlite.exec(`
+    DROP TABLE IF EXISTS bookmarks;
+    DROP TABLE IF EXISTS notes;
     DROP TABLE IF EXISTS comments;
     DROP TABLE IF EXISTS course_ratings;
     DROP TABLE IF EXISTS video_watch_events;
@@ -2805,6 +2807,48 @@ This course is still in draft while the cluster examples are rewritten against t
 
   console.log("Created Marta's Refund Request on her Team Licence.");
 
+  // ─── Bookmarks and Notes ───
+  // What a Student kept for themselves. Private to each Student, so these only
+  // ever show on their own Lesson pages and Saved page.
+
+  const emma = studentByEmail("emma.wilson@student.dev");
+
+  db.insert(schema.bookmarks)
+    .values([
+      { userId: emma.id, lessonId: course1LessonIds[2], createdAt: daysAgo(5) },
+      { userId: emma.id, lessonId: course1LessonIds[7], createdAt: daysAgo(2) },
+      { userId: liam.id, lessonId: course1LessonIds[1], createdAt: daysAgo(7) },
+    ])
+    .run();
+
+  db.insert(schema.notes)
+    .values([
+      {
+        userId: emma.id,
+        lessonId: course1LessonIds[2],
+        body: "Generics clicked here. Come back before the quiz.",
+        createdAt: daysAgo(5),
+        updatedAt: daysAgo(3),
+      },
+      {
+        userId: emma.id,
+        lessonId: course1LessonIds[7],
+        body: "Type inference still fuzzy — reread the second example.",
+        createdAt: daysAgo(2),
+        updatedAt: daysAgo(2),
+      },
+      {
+        userId: liam.id,
+        lessonId: course1LessonIds[1],
+        body: "Setup took ages on Windows. Notes for next time: use WSL.",
+        createdAt: daysAgo(7),
+        updatedAt: daysAgo(7),
+      },
+    ])
+    .run();
+
+  console.log("Created bookmarks and notes.");
+
   // ─── Flush watch events ───
   // Batched: the heartbeat makes these by far the largest table, and one
   // statement per row would dominate the seed's runtime.
@@ -2847,6 +2891,9 @@ This course is still in draft while the cluster examples are rewritten against t
   console.log(`  Enrollments: ${countRows(schema.enrollments)}`);
   console.log(`  Course ratings: ${countRows(schema.courseRatings)}`);
   console.log(`  Lesson comments: ${countRows(schema.comments)}`);
+  console.log(
+    `  Bookmarks: ${countRows(schema.bookmarks)}, notes: ${countRows(schema.notes)}`
+  );
   console.log(
     `  Lesson progress: ${countRows(schema.lessonProgress)} (${countRows(schema.lessonProgress, eq(schema.lessonProgress.status, LessonProgressStatus.Completed))} completed)`
   );
