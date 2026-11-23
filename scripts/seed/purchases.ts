@@ -126,7 +126,7 @@ export function seedPurchases(
   // Redeem 2 of the 5 coupons. Redeemers are named by email, not by position in
   // the students array — position would silently re-point these redemptions at
   // different people the moment a student is inserted rather than appended.
-  // Both already have an enrolment for course 2 from the enrolments section.
+  // Both already have an enrolment for course 2 from narrative.ts.
   db.update(schema.coupons)
     .set({
       redeemedByUserId: studentByEmail("olivia.martinez@student.dev").id,

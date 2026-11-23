@@ -122,7 +122,7 @@ export function seedUsers() {
     .all();
 
   // The wider student body. These carry the bulk purchase and progress history
-  // generated at the bottom of this file. Sign-up dates are spread across the
+  // generated in generated-history.ts. Sign-up dates are spread across the
   // last twelve months, including the last few days.
   const cohortNames = [
     "Ava Nakamura",
