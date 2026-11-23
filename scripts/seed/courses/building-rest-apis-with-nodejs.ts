@@ -162,7 +162,7 @@ Middleware functions have access to the request, response, and next function in 
 
 \`\`\`javascript
 function logger(req, res, next) {
-  console.log(\\\`\\\${req.method} \\\${req.url}\\\`);
+  console.log(\`\${req.method} \${req.url}\`);
   next();
 }
 
@@ -482,7 +482,7 @@ describe('User CRUD', () => {
     expect(createRes.status).toBe(201);
 
     const getRes = await request(app)
-      .get(\\\`/api/users/\\\${createRes.body.id}\\\`);
+      .get(\`/api/users/\${createRes.body.id}\`);
     expect(getRes.body.name).toBe('Test');
   });
 });

@@ -76,4 +76,15 @@ describe("Building REST APIs with Node.js", () => {
       expect(code).not.toMatch(/JWT_SECRET\s*(\|\||\?\?)/);
     }
   });
+
+  // Over-escaping in the seed source once showed learners \`\${req.method}`.
+  it("shows template literals without stray backslashes", () => {
+    const allExamples = buildingRestApisWithNodejs.modules
+      .flatMap((module) => module.lessons)
+      .flatMap((lesson) => javascriptExamples(lesson.content ?? ""));
+
+    for (const code of allExamples) {
+      expect(code).not.toMatch(/\\[`$]/);
+    }
+  });
 });

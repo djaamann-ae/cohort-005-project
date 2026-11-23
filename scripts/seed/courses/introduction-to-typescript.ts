@@ -100,7 +100,7 @@ Let's write our first TypeScript program and see the compilation process in acti
 
 \`\`\`typescript
 function greet(name: string): string {
-  return \\\`Hello, \\\${name}!\\\`;
+  return \`Hello, \${name}!\`;
 }
 
 console.log(greet('World'));
@@ -342,7 +342,7 @@ Construct string types using template literal syntax.
 
 \`\`\`typescript
 type Color = 'red' | 'blue' | 'green';
-type CSSProperty = \\\`color-\\\${Color}\\\`;
+type CSSProperty = \`color-\${Color}\`;
 // 'color-red' | 'color-blue' | 'color-green'
 \`\`\``,
         },
