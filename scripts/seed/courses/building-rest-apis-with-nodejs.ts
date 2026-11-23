@@ -308,19 +308,98 @@ await db.transaction(async (tx) => {
           videoUrl: "https://www.youtube.com/watch?v=lsMQRaeKNDk",
           content: `## JSON Web Tokens
 
-Implement JWT-based authentication for your API.
+A JSON Web Token (JWT) is a signed string your API hands out when someone logs in. The client sends it back on every request, and the API checks its signature instead of looking up a session. This lesson covers what is inside a token, issuing one at login, and checking it on every request.
+
+### What is inside a token
+
+A token is three base64url parts joined by dots: \`header.payload.signature\`.
+
+- The **header** names the signing algorithm, for example \`HS256\`.
+- The **payload** holds the claims: who the token is about (\`sub\`) and when it expires (\`exp\`).
+- The **signature** is made from the header, the payload and a secret only your server knows.
+
+A JWT is **signed, not encrypted**. Anyone holding the token can decode the payload and read it, so put in only what the API needs to identify the user, and never a password. The signature does not hide anything. It proves your server issued the token and that nobody changed the payload since.
+
+### The signing secret
+
+Read the secret from the environment, and refuse to start without one. Generate a long random value, for example with \`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"\`.
 
 \`\`\`javascript
+// auth/secret.js
+const secret = process.env.JWT_SECRET;
+if (!secret) {
+  throw new Error('JWT_SECRET is not set');
+}
+
+export const JWT_SECRET = secret;
+\`\`\`
+
+Never fall back to a default such as \`'dev-secret'\`: anyone who reads your code could sign their own tokens.
+
+### Issuing a token at login
+
+Check the password before you issue anything. Answer an unknown email and a wrong password with the same \`401\`, so the response does not tell an attacker which emails have accounts.
+
+\`\`\`javascript
+import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import { JWT_SECRET } from './auth/secret.js';
 
 app.post('/api/login', async (req, res) => {
-  const user = await findUser(req.body.email);
-  const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, {
-    expiresIn: '7d'
+  const { email, password } = req.body;
+  const user = await findUserByEmail(email);
+  const passwordMatches =
+    user !== undefined && (await bcrypt.compare(password, user.passwordHash));
+
+  if (!passwordMatches) {
+    return res.status(401).json({ error: 'Invalid email or password' });
+  }
+
+  const token = jwt.sign({ sub: String(user.id) }, JWT_SECRET, {
+    algorithm: 'HS256',
+    expiresIn: '15m',
   });
   res.json({ token });
 });
-\`\`\``,
+\`\`\`
+
+Validate \`req.body\` with Zod first, as in the validation lesson; it is left out here to keep the example short.
+
+\`expiresIn\` sets the \`exp\` claim. Keep it short. Once a JWT is issued, you cannot revoke it before it expires without storing extra state on the server. A stolen token with a seven-day expiry works for seven days.
+
+### Checking the token on every request
+
+The \`authenticate\` middleware from the Custom Middleware lesson only checked that an \`Authorization\` header was there. Any string got through. This version checks the token:
+
+\`\`\`javascript
+import jwt from 'jsonwebtoken';
+import { JWT_SECRET } from './auth/secret.js';
+
+export function authenticate(req, res, next) {
+  const [scheme, token] = (req.headers.authorization ?? '').split(' ');
+  if (scheme !== 'Bearer' || !token) {
+    return res.status(401).json({ error: 'Missing bearer token' });
+  }
+
+  try {
+    const payload = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
+    req.userId = Number(payload.sub);
+    next();
+  } catch {
+    return res.status(401).json({ error: 'Invalid or expired token' });
+  }
+}
+
+app.get('/api/me', authenticate, async (req, res) => {
+  res.json(await findUserById(req.userId));
+});
+\`\`\`
+
+The client sends the token in a header: \`Authorization: Bearer <token>\`.
+
+- \`jwt.verify\` checks both the signature and the expiry, and throws if either fails. Both are a \`401\`.
+- Passing \`algorithms\` means the server decides how a token must be signed. The token does not get to choose.
+- Never use \`jwt.decode\` to authenticate anyone. It reads the payload without checking the signature, so it accepts a forged token.`,
         },
         {
           title: "Rate Limiting",
@@ -415,11 +494,20 @@ describe('User CRUD', () => {
 
 Manage environment-specific settings with environment variables.
 
+A setting with a safe default, like the port, can fall back to it. A secret cannot, so the app refuses to start without one.
+
 \`\`\`javascript
+function requireEnv(name) {
+  const value = process.env[name];
+  if (!value) throw new Error(name + ' is not set');
+  return value;
+}
+
 const config = {
   port: process.env.PORT || 3000,
   dbUrl: process.env.DATABASE_URL || 'sqlite:app.db',
-  jwtSecret: process.env.JWT_SECRET || 'dev-secret'
+  // No fallback: a default secret would let anyone who reads the code sign tokens.
+  jwtSecret: requireEnv('JWT_SECRET')
 };
 \`\`\``,
         },
