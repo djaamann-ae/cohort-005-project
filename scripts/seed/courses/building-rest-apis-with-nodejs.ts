@@ -171,7 +171,9 @@ function authenticate(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
   next();
 }
-\`\`\``,
+\`\`\`
+
+This \`authenticate\` only checks that the header is there, to show the shape of a middleware. It does not check the token: the JWT Authentication lesson replaces it with one that does.`,
         },
         {
           title: "Error Handling Middleware",
@@ -338,7 +340,7 @@ Never fall back to a default such as \`'dev-secret'\`: anyone who reads your cod
 
 ### Issuing a token at login
 
-Check the password before you issue anything. Answer an unknown email and a wrong password with the same \`401\`, so the response does not tell an attacker which emails have accounts.
+Check the password before you issue anything. Answer an unknown email and a wrong password with the same \`401\`, so the response body does not tell an attacker which emails have accounts. The response time still can, because \`bcrypt.compare\` only runs for a known email; to close that too, compare against a fixed dummy hash when no user is found.
 
 \`\`\`javascript
 import bcrypt from 'bcrypt';
